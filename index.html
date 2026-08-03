@@ -677,8 +677,13 @@ function flash(t){st.msg=t;paintMsg();setTimeout(()=>{st.msg="";paintMsg();},260
 function paintMsg(){document.querySelectorAll(".msg").forEach(e=>e.textContent=st.msg);}
 
 /* ── 백업 ── */
+const stamp=t=>{const d=new Date(t);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+
+    String(d.getDate()).padStart(2,"0")+" "+String(d.getHours()).padStart(2,"0")+
+    ":"+String(d.getMinutes()).padStart(2,"0");};
 function snapshot(){
-  return {v:5, ts:Date.now(),
+  const now=Date.now();
+  return {v:5, ts:now, built:stamp(now),
     oursText:st.oursText, cfg:st.cfg, warSeason:st.warSeason, oppClub:st.oppClub,
     rcRecords:st.rcRecords, oppDb:st.oppDb, records:st.records};
 }
@@ -722,9 +727,14 @@ async function saveAll(){
     warSeason:s.warSeason, oppClub:s.oppClub}));
   flash(ok?"저장했습니다":"이 환경에서는 저장이 안 됩니다 — 설정 탭에서 백업하세요");
 }
-const saveRc=()=>store.set("clubwar:rc",JSON.stringify(st.rcRecords));
-const saveOpp=()=>store.set("clubwar:opp",JSON.stringify(st.oppDb));
-const saveLog=()=>store.set("clubwar:log",JSON.stringify(st.records));
+async function touch(){
+  const s=snapshot();
+  await store.set("clubwar:v5",JSON.stringify({v:5,ts:s.ts,built:s.built,
+    oursText:s.oursText,cfg:s.cfg,warSeason:s.warSeason,oppClub:s.oppClub}));
+}
+const saveRc=async()=>{await store.set("clubwar:rc",JSON.stringify(st.rcRecords));await touch();};
+const saveOpp=async()=>{await store.set("clubwar:opp",JSON.stringify(st.oppDb));await touch();};
+const saveLog=async()=>{await store.set("clubwar:log",JSON.stringify(st.records));await touch();};
 
 async function load(){
   /* 1) 브라우저에 저장된 것 */
@@ -741,9 +751,11 @@ async function load(){
   /* 2) HTML에 구워진 것 */
   const seed=(typeof window!=="undefined"&&window.__SEED__)||null;
   /* 더 최근 것을 쓴다 */
-  if(seed&&stored) applySnapshot((seed.ts||0)>=(stored.ts||0)?seed:stored);
-  else applySnapshot(seed||stored);
-  st.seeded=!!seed;
+  const useSeed=seed&&(!stored||(seed.ts||0)>=(stored.ts||0));
+  applySnapshot(useSeed?seed:(stored||seed));
+  st.seeded=!!useSeed;
+  st.seedTs=seed?(seed.built||stamp(seed.ts||0)):null;
+  st.storedTs=stored?(stored.built||(stored.ts?stamp(stored.ts):null)):null;
 }
 async function copy(text,ok){
   try{await navigator.clipboard.writeText(text);flash(ok);}
@@ -1039,14 +1051,17 @@ function viewCfg(){
    '<div class="hr"><div class="lbl"><b>자료 보관</b></div>'+
    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+
    chip(STORE_LABEL[storeMode],storeMode==="memory"?"red":"green")+
-   (st.seeded?chip("HTML에 구워진 자료 사용 중","violet"):"")+
+   chip(st.seeded?"HTML에 구워진 자료 사용 중":"브라우저 자료 사용 중",st.seeded?"violet":"cyan")+
+   (st.seedTs?chip("파일에 구워진 시각 "+st.seedTs,"dim"):chip("이 파일엔 자료가 안 구워져 있음","amber"))+
+   (st.storedTs?chip("브라우저 저장 시각 "+st.storedTs,"dim"):"")+
    chip("랭챌 "+st.rcRecords.length+"건","dim")+
    chip("상대 "+Object.keys(st.oppDb).length+"명","dim")+
    chip("대전 "+st.records.length+"건","dim")+'</div>'+
    '<div class="note">깃허브에 새 파일을 올리면 브라우저 저장소와 주소가 달라져 자료가 안 보일 수 있습니다. '+
    '<b>아래 버튼으로 지금 자료가 담긴 HTML을 받아서 그걸 올리면</b> 자료가 파일과 함께 따라갑니다.</div>'+
    '<div class="btnrow" style="margin-bottom:14px">'+btnH("btn-dlhtml","데이터 포함 HTML 내려받기","green")+
-   btnH("btn-bkcopy","백업 글 복사","cyan")+'<span class="msg"></span></div>'+
+   btnH("btn-bkcopy","백업 글 복사","cyan")+btnH("btn-reload","캐시 무시하고 새로고침","amber")+
+   '<span class="msg"></span></div>'+
    '<textarea id="ta-restore" style="min-height:80px" placeholder="백업 글을 붙여넣고 아래 되돌리기를 누르세요"></textarea>'+
    '<div class="btnrow" style="margin-top:10px">'+btnH("btn-restore","백업에서 되돌리기","violet")+'</div>'+
    '<div class="btnrow" style="margin-top:18px">'+btnH("btn-clr-rc","랭챌 비우기","red")+
@@ -1148,6 +1163,10 @@ function bind(){
     flash(n+"건을 '"+t+"'으로 옮겼습니다");
   });
   on("btn-dlhtml","click",downloadHtml);
+  on("btn-reload","click",()=>{
+    try{ location.replace(location.pathname+"?v="+Date.now()); }
+    catch(e){ flash("새로고침에 실패했습니다"); }
+  });
   on("btn-bkcopy","click",()=>copy(JSON.stringify(snapshot()),"백업 글을 복사했습니다"));
   on("btn-restore","click",async()=>{
     const el=document.getElementById("ta-restore");
