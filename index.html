@@ -174,14 +174,23 @@ function parseOpps(text,odb,cfg){
     if(!c[0])return;
     const pr=odb[c[0]]||{};
     const rank=num(c[2])||pr.rank||0;
-    let wr=num(c[3]); if(wr!=null&&wr>1)wr=wr/100;
+    let wr=null, games=0, gKnown=false;
+    const rec=(c[3]||"").match(/^(\d+)\s*[-\/]\s*(\d+)\s*[-\/]\s*(\d+)$/);
+    if(rec){ const w=+rec[1],dr=+rec[2],l=+rec[3];
+      games=w+dr+l; if(games>0){wr=(w+dr*.5)/games; gKnown=true;} }
+    else { const v=num(c[3]); if(v!=null)wr=v>1?v/100:v; }
+    if(!gKnown){
+      const g6=num(c[6]);
+      if(g6!=null&&g6>0){games=g6;gKnown=true;}
+      else if(pr.gamesKnown&&pr.games>0){games=pr.games;gKnown=true;}
+      else games=cfg.oppGames||40;
+    }
     if(wr==null)wr=pr.wr!=null?pr.wr:null;
-    const games=num(c[6])||pr.games||cfg.oppGames||40;
     const wins=wr!=null?wr*games:games/2;
     const ovr=num(c[7])!=null?num(c[7]):(pr.ovr||null);
     out.push({id:"D"+i,name:c[0],
       stadium:STADIUMS.find(sd=>(c[1]||"").includes(sd))||pr.stadium||STADIUMS[0],
-      rank,wr,games,wins,known:!!(rank||wr!=null),
+      rank,wr,games,wins,gamesKnown:gKnown,known:!!(rank||wr!=null),
       rz:rankZ(rank,games,cfg),wz:winZ(games,wins),
       ovr,revealed:ovr!=null,ovrFromDb:num(c[7])==null&&pr.ovr!=null,
       defWin:num(c[4])||0, taken:Math.min(3,num(c[5])||0),
@@ -330,6 +339,47 @@ function buildDb(recs){
   return db;
 }
 
+/* ── 상대 랭챌 보강: 명단과 따로 들어오는 자료를 닉네임으로 합침 ── */
+function parseOppRc(text){
+  const rows=[],bad=[];
+  text.split(/\r?\n/).forEach((line,li)=>{
+    if(!line.trim()||/^#/.test(line))return;
+    const c=cells(line); if(!c[0]){bad.push(li+1);return;}
+    const rank=num(c[1])||0;
+    let rest=c.slice(2).filter(t=>t!=="");
+    let pctv=null;
+    const pi=rest.findIndex(t=>/%/.test(t));
+    if(pi>=0){pctv=num(rest[pi]); rest=rest.slice(0,pi).concat(rest.slice(pi+1));}
+    let w=0,dr=0,l=0;
+    const dash=rest.find(t=>/^\d+\s*[-\/]\s*\d+\s*[-\/]\s*\d+$/.test(t));
+    if(dash){const v=dash.split(/[-\/]/).map(x=>parseInt(x,10));w=v[0];dr=v[1];l=v[2];}
+    else{
+      const n2=rest.map(num).filter(v=>v!=null);
+      if(n2.length>=3){w=n2[0];dr=n2[1];l=n2[2];}
+      else if(n2.length===2){w=n2[0];l=n2[1];}
+      else if(n2.length===1&&pctv!=null){const g=n2[0];w=Math.round(g*pctv/100);l=g-w;}
+    }
+    const games=w+dr+l;
+    if(!rank&&!games&&pctv==null){bad.push(li+1);return;}
+    rows.push({name:c[0],rank,games,wins:w+dr*.5,
+      wr:games>0?(w+dr*.5)/games:(pctv!=null?pctv/100:null),
+      gamesKnown:games>0});
+  });
+  return {rows,bad};
+}
+function mergeOppRc(odb,rows,club){
+  const next=Object.assign({},odb);
+  rows.forEach(r=>{
+    const prev=next[r.name]||{};
+    next[r.name]=Object.assign({},prev,{name:r.name,club:club||prev.club||"",
+      rank:r.rank||prev.rank||0,
+      wr:r.wr!=null?r.wr:(prev.wr!=null?prev.wr:null),
+      games:r.games||prev.games||0,
+      gamesKnown:r.gamesKnown||!!prev.gamesKnown});
+  });
+  return next;
+}
+
 /* ── 상대 프로필: 닉네임별 최신 스냅샷 ── */
 function upsertOpps(odb,opps,club,season){
   const next=Object.assign({},odb);
@@ -339,7 +389,8 @@ function upsertOpps(odb,opps,club,season){
       stadium:d.stadium||prev.stadium,
       rank:d.rank||prev.rank||0,
       wr:d.wr!=null?d.wr:(prev.wr!=null?prev.wr:null),
-      games:d.games||prev.games||0,
+      games:(d.gamesKnown?d.games:0)||prev.games||0,
+      gamesKnown:d.gamesKnown||!!prev.gamesKnown,
       ovr:d.ovr!=null?d.ovr:(prev.ovr||null),
       ace:d.ace||false, seen:(prev.seen||0)+1, season:season||prev.season||""};
   });
@@ -348,7 +399,7 @@ function upsertOpps(odb,opps,club,season){
 function oppsToText(odb,club){
   return Object.keys(odb).map(k=>odb[k]).filter(e=>!club||e.club===club)
     .map(e=>[e.name,e.stadium||"",e.rank||"",e.wr!=null?Math.round(e.wr*100)+"%":"",0,0,
-      e.games||"",e.ovr||"",e.ace?"에이스":""].join("\t").replace(/\t+$/,"")).join("\n");
+      e.gamesKnown?(e.games||""):"",e.ovr||"",e.ace?"에이스":""].join("\t").replace(/\t+$/,"")).join("\n");
 }
 
 /* ── 오더 ── */
@@ -565,7 +616,7 @@ const S_RC=[].concat(
 const st={
   tab:0, oursText:S_OURS, oppsText:S_OPPS, logText:"",
   rcText:"", rcSeasonSel:0, rcRecords:S_RC.slice(),
-  oppDb:{}, oppClub:"Keystone", clubSel:"",
+  oppDb:{}, oppClub:"Keystone", clubSel:"", oppRcText:"",
   warSeason:104, records:[],
   renameFrom:"", renameTo:"", msg:"",
   cfg:{subOvr:112, subNote:"", anchorSeason:227, anchorDate:"2026-08-03",
@@ -586,6 +637,7 @@ function derive(){
   D.fit=fitModel(st.records,st.cfg);
   D.staged=parseRecords(st.logText,D.ours,st.oppDb,st.warSeason,st.oppClub,st.cfg);
   D.rcStaged=parseRc(st.rcText,st.rcSeasonSel,"우리","");
+  D.oppRcStaged=parseOppRc(st.oppRcText);
   D.dMap={}; D.opps.forEach(d=>D.dMap[d.id]=d);
   D.clubs=[]; Object.keys(st.oppDb).forEach(k=>{
     const c=st.oppDb[k].club; if(c&&D.clubs.indexOf(c)<0)D.clubs.push(c);});
@@ -724,7 +776,8 @@ function viewOpps(){
       ds.map(d=>'<div class="row"><span class="nm">'+esc(d.name)+'</span>'+
         (d.ace?chip("에이스","violet"):"")+(d.sub?chip("클라","green"):"")+
         (d.rank?chip("#"+d.rank.toLocaleString(),"amber"):chip("순위 없음","red"))+
-        (d.wr!=null?chip(Math.round(d.wr*100)+"%",d.wr>=.6?"green":"cyan"):"")+
+        (d.wr!=null?chip(Math.round(d.wr*100)+"%"+(d.gamesKnown?" ("+d.games+"판)":" (추정)"),
+          d.wr==null?"dim":d.gamesKnown?(d.wr>=.6?"green":"cyan"):"amber"):"")+
         (d.defWin>0?chip("방어 "+d.defWin,"red"):"")+
         chip("✓".repeat(d.taken)||"—",d.taken>=3?"green":"dim")+'</div>').join("")+'</div>';
   });
@@ -743,6 +796,23 @@ function viewOpps(){
    '<div class="note">뒤에 <b>뺏은성공(0~3) · 판수 · OVR</b>을 더 적을 수 있습니다. 줄 끝에 <b>에이스</b>를 적으면 6/4/2 점수로 계산합니다. 대전 중에는 방어성공과 뺏은성공만 갱신하고 다시 돌리세요.</div>'+
    (unknown.length?'<div class="note" style="color:var(--red)">순위·승률이 없는 '+unknown.length+'명은 평균 실력으로 봅니다 — '+
      esc(unknown.slice(0,6).map(d=>d.name).join(", "))+'</div>':"")+
+
+   '<div class="card" style="padding:14px;margin-bottom:18px">'+
+   '<div class="lbl"><b>자료 충실도</b><i>알수록 오더가 정확해집니다</i></div>'+
+   '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+
+   chip("순위 "+D.opps.filter(d=>d.rank).length+"/"+D.opps.length,
+     D.opps.every(d=>d.rank)?"green":"amber")+
+   chip("승률 "+D.opps.filter(d=>d.wr!=null).length+"/"+D.opps.length,
+     D.opps.every(d=>d.wr!=null)?"green":"amber")+
+   chip("판수 "+D.opps.filter(d=>d.gamesKnown).length+"/"+D.opps.length,
+     D.opps.every(d=>d.gamesKnown)?"green":"red")+'</div>'+
+   '<div class="note" style="margin:0 0 10px">판수를 모르는 상대는 '+st.cfg.oppGames+
+   '판으로 가정합니다. 10판 70%와 80판 70%는 실력이 전혀 다르므로, 판수가 들어올수록 승률 예측이 정확해집니다.</div>'+
+   '<textarea id="ta-opprc" style="min-height:90px" placeholder="뚜뚜&#9;900&#9;45&#9;2&#9;23">'+esc(st.oppRcText)+'</textarea>'+
+   '<div class="note" style="margin:10px 0">랭챌 자료를 따로 조사하는 분이 있으면 여기에 <b>닉네임 · 순위 · 승 · 무 · 패</b>만 붙여넣으세요. 명단은 건드리지 않고 닉네임으로 합칩니다.</div>'+
+   '<div class="btnrow">'+btnH("btn-opprc","랭챌 자료 "+D.oppRcStaged.rows.length+"명 합치기","violet")+
+   (D.oppRcStaged.bad.length?'<span style="font-size:12px;color:var(--red)">'+D.oppRcStaged.bad.length+'줄 건너뜀</span>':"")+
+   '<span class="msg"></span></div></div>'+
 
    '<div class="fld"><div class="lbl"><b>상대 홈구장</b><i>점령 보너스 +10</i></div>'+
    '<select id="sel-home">'+STADIUMS.map(s=>'<option '+(s===st.cfg.homeStadium?"selected":"")+'>'+s+'</option>').join("")+'</select></div>'+
@@ -798,6 +868,7 @@ function viewOrder(){
         '<span style="font-size:14px;font-weight:700">'+esc(d.name)+'</span>'+
         (d.ace?chip("에이스","violet"):"")+
         (d.rank?chip("#"+d.rank.toLocaleString(),"amber"):"")+
+        (d.wr!=null&&!d.gamesKnown?chip("판수 추정","amber"):"")+
         '<span class="mini" style="margin-left:auto">'+
         [0,1,2].map(i=>'<span style="color:'+(i<d.taken?"var(--green)":"var(--dim)")+';margin-left:5px">'+
           (i<d.taken?"✓":"+"+sc[i])+'</span>').join("")+'</span></div>'+
@@ -955,6 +1026,16 @@ function bind(){
     st.oppDb=upsertOpps(st.oppDb,D.opps,st.oppClub.trim(),st.warSeason);
     await saveOpp(); await saveAll(); render();
     flash("'"+st.oppClub+"' "+D.opps.length+"명을 저장했습니다");
+  });
+  on("ta-opprc","input",e=>{st.oppRcText=e.target.value;});
+  on("ta-opprc","blur",render);
+  on("btn-opprc","click",async()=>{
+    if(!D.oppRcStaged.rows.length){flash("합칠 자료가 없습니다");return;}
+    const n=D.oppRcStaged.rows.length;
+    const known=D.oppRcStaged.rows.filter(r=>r.gamesKnown).length;
+    st.oppDb=mergeOppRc(st.oppDb,D.oppRcStaged.rows,st.oppClub.trim());
+    st.oppRcText=""; await saveOpp(); render();
+    flash(n+"명 합침 — 판수까지 확보 "+known+"명");
   });
   on("btn-oppload","click",()=>{
     const t=oppsToText(st.oppDb,st.oppClub);
