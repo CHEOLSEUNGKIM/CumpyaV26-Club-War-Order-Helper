@@ -118,21 +118,32 @@ function rcSeason(cfg,now){
   return {num,status,start,end,label:isoDay(start),endLabel:isoDay(end)};
 }
 
-/* ── 저장소 (Claude 앱 / 브라우저 / 메모리) ── */
+/* ── 저장소: 앱 내장 → 브라우저 → 메모리 순으로 시도 ── */
 const mem={};
+let storeMode="memory";
+try{
+  const k="__probe__";
+  localStorage.setItem(k,"1"); localStorage.removeItem(k);
+  storeMode="browser";
+}catch(e){}
+if(typeof window!=="undefined"&&window.storage)storeMode="app";
+const STORE_LABEL={app:"이 대화에 저장됨",browser:"이 브라우저에 저장됨",
+  memory:"저장 안 됨 — 새로고침하면 사라집니다"};
 const store={
   async get(k){
-    if(window.storage){try{const r=await window.storage.get(k);return r?r.value:null;}catch(e){}}
-    try{const v=localStorage.getItem(k);if(v!=null)return v;}catch(e){}
+    if(storeMode==="app"){try{const r=await window.storage.get(k);return r?r.value:null;}catch(e){}}
+    if(storeMode==="browser"){try{const v=localStorage.getItem(k);if(v!=null)return v;}catch(e){}}
     return mem[k]||null;
   },
   async set(k,v){
     mem[k]=v;
-    if(window.storage){try{await window.storage.set(k,v);return true;}catch(e){}}
-    try{localStorage.setItem(k,v);return true;}catch(e){}
-    return false;
+    if(storeMode==="app"){try{await window.storage.set(k,v);return true;}catch(e){}}
+    if(storeMode==="browser"){try{localStorage.setItem(k,v);return true;}catch(e){}}
+    return storeMode==="memory"?false:true;
   }
 };
+/* 예전 버전 키에서 옮겨오기 */
+const LEGACY=["clubwar:v4","clubwar:v3","clubwar:v2","clubwar:v1"];
 
 /* ── 파싱 ── */
 const cells=l=>(/[\t,]/.test(l)?l.split(/[\t,]/):l.trim().split(/\s+/)).map(s=>s.trim());
@@ -665,26 +676,74 @@ function slider(id,label,val,min,max,step,fmt){
 function flash(t){st.msg=t;paintMsg();setTimeout(()=>{st.msg="";paintMsg();},2600);}
 function paintMsg(){document.querySelectorAll(".msg").forEach(e=>e.textContent=st.msg);}
 
+/* ── 백업 ── */
+function snapshot(){
+  return {v:5, ts:Date.now(),
+    oursText:st.oursText, cfg:st.cfg, warSeason:st.warSeason, oppClub:st.oppClub,
+    rcRecords:st.rcRecords, oppDb:st.oppDb, records:st.records};
+}
+function applySnapshot(o){
+  if(!o)return false;
+  if(o.oursText)st.oursText=o.oursText;
+  if(o.cfg)Object.assign(st.cfg,o.cfg);
+  if(o.warSeason)st.warSeason=o.warSeason;
+  if(o.oppClub)st.oppClub=o.oppClub;
+  if(Array.isArray(o.rcRecords))st.rcRecords=o.rcRecords;
+  if(o.oppDb&&typeof o.oppDb==="object")st.oppDb=o.oppDb;
+  if(Array.isArray(o.records))st.records=o.records;
+  return true;
+}
+/* 지금 자료를 그대로 품은 HTML 파일을 만든다 */
+function downloadHtml(){
+  try{
+    const doc=document.documentElement.cloneNode(true);
+    ["#app","#nav"].forEach(sel=>{const n=doc.querySelector(sel);if(n)n.innerHTML="";});
+    const hd=doc.querySelector("#hdinfo"); if(hd)hd.textContent="";
+    Array.prototype.slice.call(doc.querySelectorAll("script#seed")).forEach(n=>n.parentNode.removeChild(n));
+    const seed=document.createElement("script");
+    seed.id="seed";
+    seed.textContent="window.__SEED__="+JSON.stringify(snapshot()).replace(/</g,"\\u003c")+";";
+    doc.querySelector("head").appendChild(seed);
+    const blob=new Blob(["<!DOCTYPE html>\n"+doc.outerHTML],{type:"text/html;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download="클럽대전-오더도우미.html";
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{URL.revokeObjectURL(url);a.parentNode.removeChild(a);},1500);
+    flash("자료가 담긴 HTML을 내려받았습니다");
+  }catch(e){ flash("내려받기가 막혔습니다 — 아래 백업 글을 대신 쓰세요"); }
+}
+
 /* ── 저장 ── */
 async function saveAll(){
+  const s=snapshot();
   const ok=await store.set("clubwar:v5",JSON.stringify({
-    oursText:st.oursText, cfg:st.cfg, warSeason:st.warSeason, oppClub:st.oppClub}));
-  flash(ok?"저장했습니다":"저장에 실패했습니다");
+    v:5, ts:s.ts, oursText:s.oursText, cfg:s.cfg,
+    warSeason:s.warSeason, oppClub:s.oppClub}));
+  flash(ok?"저장했습니다":"이 환경에서는 저장이 안 됩니다 — 설정 탭에서 백업하세요");
 }
 const saveRc=()=>store.set("clubwar:rc",JSON.stringify(st.rcRecords));
 const saveOpp=()=>store.set("clubwar:opp",JSON.stringify(st.oppDb));
 const saveLog=()=>store.set("clubwar:log",JSON.stringify(st.records));
 
 async function load(){
-  try{const v=await store.get("clubwar:v5");
-    if(v){const o=JSON.parse(v);
-      if(o.oursText)st.oursText=o.oursText;
-      if(o.cfg)Object.assign(st.cfg,o.cfg);
-      if(o.warSeason)st.warSeason=o.warSeason;
-      if(o.oppClub)st.oppClub=o.oppClub;}}catch(e){}
-  try{const v=await store.get("clubwar:rc"); if(v)st.rcRecords=JSON.parse(v);}catch(e){}
-  try{const v=await store.get("clubwar:opp"); if(v)st.oppDb=JSON.parse(v);}catch(e){}
-  try{const v=await store.get("clubwar:log"); if(v)st.records=JSON.parse(v);}catch(e){}
+  /* 1) 브라우저에 저장된 것 */
+  let stored=null;
+  try{const v=await store.get("clubwar:v5"); if(v)stored=JSON.parse(v);}catch(e){}
+  if(!stored) for(const k of LEGACY){
+    try{const v=await store.get(k); if(v){stored=JSON.parse(v);break;}}catch(e){}
+  }
+  if(stored){
+    try{const v=await store.get("clubwar:rc"); if(v)stored.rcRecords=JSON.parse(v);}catch(e){}
+    try{const v=await store.get("clubwar:opp"); if(v)stored.oppDb=JSON.parse(v);}catch(e){}
+    try{const v=await store.get("clubwar:log"); if(v)stored.records=JSON.parse(v);}catch(e){}
+  }
+  /* 2) HTML에 구워진 것 */
+  const seed=(typeof window!=="undefined"&&window.__SEED__)||null;
+  /* 더 최근 것을 쓴다 */
+  if(seed&&stored) applySnapshot((seed.ts||0)>=(stored.ts||0)?seed:stored);
+  else applySnapshot(seed||stored);
+  st.seeded=!!seed;
 }
 async function copy(text,ok){
   try{await navigator.clipboard.writeText(text);flash(ok);}
@@ -977,11 +1036,22 @@ function viewCfg(){
    btnH("btn-rename","옮기기","violet")+'</div>'+
    '<div class="note" style="margin-top:10px">닉을 바꾼 상대는 이름으로 못 찾습니다. 순위와 전적이 예전 그대로면 같은 사람일 가능성이 높습니다.</div></div>'+
 
-   '<div class="hr"><div class="lbl"><b>자료 관리</b></div>'+
-   '<div class="mini" style="line-height:1.9;margin-bottom:12px">'+
-   '<div>랭챌 기록 '+st.rcRecords.length+'건 · 상대 자료 '+Object.keys(st.oppDb).length+'명 · 대전 기록 '+st.records.length+'건</div></div>'+
-   '<div class="btnrow">'+btnH("btn-clr-rc","랭챌 비우기","red")+
-   btnH("btn-clr-opp","상대 자료 비우기","red")+btnH("btn-clr-log","대전 기록 비우기","red")+'</div></div>';
+   '<div class="hr"><div class="lbl"><b>자료 보관</b></div>'+
+   '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+
+   chip(STORE_LABEL[storeMode],storeMode==="memory"?"red":"green")+
+   (st.seeded?chip("HTML에 구워진 자료 사용 중","violet"):"")+
+   chip("랭챌 "+st.rcRecords.length+"건","dim")+
+   chip("상대 "+Object.keys(st.oppDb).length+"명","dim")+
+   chip("대전 "+st.records.length+"건","dim")+'</div>'+
+   '<div class="note">깃허브에 새 파일을 올리면 브라우저 저장소와 주소가 달라져 자료가 안 보일 수 있습니다. '+
+   '<b>아래 버튼으로 지금 자료가 담긴 HTML을 받아서 그걸 올리면</b> 자료가 파일과 함께 따라갑니다.</div>'+
+   '<div class="btnrow" style="margin-bottom:14px">'+btnH("btn-dlhtml","데이터 포함 HTML 내려받기","green")+
+   btnH("btn-bkcopy","백업 글 복사","cyan")+'<span class="msg"></span></div>'+
+   '<textarea id="ta-restore" style="min-height:80px" placeholder="백업 글을 붙여넣고 아래 되돌리기를 누르세요"></textarea>'+
+   '<div class="btnrow" style="margin-top:10px">'+btnH("btn-restore","백업에서 되돌리기","violet")+'</div>'+
+   '<div class="btnrow" style="margin-top:18px">'+btnH("btn-clr-rc","랭챌 비우기","red")+
+   btnH("btn-clr-opp","상대 자료 비우기","red")+btnH("btn-clr-log","대전 기록 비우기","red")+'</div>'+
+   '<textarea readonly style="margin-top:12px;min-height:90px;color:var(--dim)">'+esc(JSON.stringify(snapshot()))+'</textarea></div>';
 }
 
 /* ── 이벤트 ── */
@@ -1076,6 +1146,18 @@ function bind(){
     st.renameFrom=""; st.renameTo="";
     await saveRc(); await saveLog(); await saveOpp(); render();
     flash(n+"건을 '"+t+"'으로 옮겼습니다");
+  });
+  on("btn-dlhtml","click",downloadHtml);
+  on("btn-bkcopy","click",()=>copy(JSON.stringify(snapshot()),"백업 글을 복사했습니다"));
+  on("btn-restore","click",async()=>{
+    const el=document.getElementById("ta-restore");
+    const t=el?el.value.trim():"";
+    if(!t){flash("백업 글을 먼저 붙여넣으세요");return;}
+    let o=null;
+    try{o=JSON.parse(t);}catch(e){flash("백업 글을 읽지 못했습니다");return;}
+    if(!applySnapshot(o)){flash("백업 글에 자료가 없습니다");return;}
+    await saveRc(); await saveOpp(); await saveLog(); await saveAll();
+    render(); flash("백업에서 되돌렸습니다");
   });
   const wipe=(label,fn)=>async()=>{
     if(!confirm(label+"를 모두 지울까요? 되돌릴 수 없습니다."))return;
