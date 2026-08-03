@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26</title>
+<title>클럽대전 오더 · 컴프야 V26 (b5.4)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -69,6 +69,7 @@ button:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-vis
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 5.4 · 2026-08-03</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -1050,6 +1051,7 @@ function viewCfg(){
 
    '<div class="hr"><div class="lbl"><b>자료 보관</b></div>'+
    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+
+   chip("BUILD "+(document.getElementById("build")?document.getElementById("build").textContent.replace("BUILD ",""):"?"),"violet")+
    chip(STORE_LABEL[storeMode],storeMode==="memory"?"red":"green")+
    chip(st.seeded?"HTML에 구워진 자료 사용 중":"브라우저 자료 사용 중",st.seeded?"violet":"cyan")+
    (st.seedTs?chip("파일에 구워진 시각 "+st.seedTs,"dim"):chip("이 파일엔 자료가 안 구워져 있음","amber"))+
