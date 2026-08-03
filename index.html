@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b5.4)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b5.5)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -69,7 +69,7 @@ button:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-vis
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 5.4 · 2026-08-03</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 5.5 · 2026-08-03</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -315,7 +315,11 @@ function parseRc(text,season,side,club){
       else if(n2.length===1&&pct!=null){ const g=n2[0]; w=Math.round(g*pct/100); l=g-w; }
     }
     const games=w+dr+l;
-    if(!rank&&!games){bad.push(li+1);return;}
+    if(!rank&&!games){
+      /* 이름만 있는 줄은 아직 안 채운 칸이므로 조용히 넘긴다 */
+      if(c.length<=1||!c.slice(1).some(x=>x))return;
+      bad.push(li+1);return;
+    }
     rows.push({season,side,club:club||"",name:c[0],rank,w,d:dr,l,games,wins:w+dr*.5});
   });
   return {rows,bad};
@@ -372,7 +376,11 @@ function parseOppRc(text){
       else if(n2.length===1&&pctv!=null){const g=n2[0];w=Math.round(g*pctv/100);l=g-w;}
     }
     const games=w+dr+l;
-    if(!rank&&!games&&pctv==null){bad.push(li+1);return;}
+    if(!rank&&!games&&pctv==null){
+      /* 이름만 있는 줄은 아직 안 채운 칸이므로 조용히 넘긴다 */
+      if(c.length<=1||!c.slice(1).some(x=>x))return;
+      bad.push(li+1);return;
+    }
     rows.push({name:c[0],rank,games,wins:w+dr*.5,
       wr:games>0?(w+dr*.5)/games:(pctv!=null?pctv/100:null),
       gamesKnown:games>0});
@@ -648,7 +656,9 @@ function derive(){
   D.sim=simulate(D.plan,D.ours,D.opps,st.cfg);
   D.fit=fitModel(st.records,st.cfg);
   D.staged=parseRecords(st.logText,D.ours,st.oppDb,st.warSeason,st.oppClub,st.cfg);
+  if(!st.rcText.trim()&&D.ours.length)st.rcText=rcTemplate(st.rcSeasonSel);
   D.rcStaged=parseRc(st.rcText,st.rcSeasonSel,"우리","");
+  D.orphans=Object.keys(D.rc).filter(n=>!D.ours.some(a=>a.name===n));
   D.oppRcStaged=parseOppRc(st.oppRcText);
   D.dMap={}; D.opps.forEach(d=>D.dMap[d.id]=d);
   D.clubs=[]; Object.keys(st.oppDb).forEach(k=>{
@@ -660,6 +670,14 @@ function derive(){
     const want=D.plan.S.indexOf(s)>=0;
     D.policy[s]=!touched?"포기":want?(r>.45?"점령":"점령 도전"):"5점만";
   });
+}
+
+/* 명단 순서대로 이름을 깔고, 해당 시즌 기록이 있으면 채워 넣는다 */
+function rcTemplate(season){
+  return D.ours.map(a=>{
+    const r=st.rcRecords.find(x=>x.name===a.name&&x.season===season);
+    return r?[a.name,r.rank||"",r.w||0,r.d||0,r.l||0].join("\t"):a.name;
+  }).join("\n");
 }
 
 /* ── 표시 도구 ── */
@@ -810,14 +828,19 @@ function viewOurs(){
    chip(D.rcNow.label+" 08:00 → "+D.rcNow.endLabel+" 00:00","dim")+
    chip(Object.keys(seasons).length+"개 시즌 누적","cyan")+'</div>'+
    '<select id="sel-season" style="margin-bottom:10px">'+opts+'</select>'+
-   '<textarea id="ta-rc" placeholder="한방에간다&#9;1240&#9;34&#9;2&#9;16">'+esc(st.rcText)+'</textarea>'+
-   '<div class="note" style="margin-top:10px"><b>34-2-16</b>처럼 한 칸에 몰아써도 되고, <b>판수와 승률%</b>만 있어도 됩니다. 무승부는 반 승으로 셉니다.</div>'+
+   '<textarea id="ta-rc" style="min-height:150px">'+esc(st.rcText)+'</textarea>'+
+   '<div class="note" style="margin-top:10px">명단의 닉네임이 자동으로 깔립니다. 이름 뒤에 <b>순위 · 승 · 무 · 패</b>만 채우세요. 이미 저장된 시즌을 고르면 그 값이 채워진 채로 나옵니다. 안 채운 줄은 그냥 넘어갑니다.</div>'+
    '<div class="btnrow">'+btnH("btn-rcadd",st.rcSeasonSel+" 시즌으로 "+D.rcStaged.rows.length+"명 저장","green")+
+   btnH("btn-rcfill","명단에서 다시 채우기","cyan")+
    (D.rcStaged.bad.length?'<span style="font-size:12px;color:var(--red)">'+D.rcStaged.bad.length+'줄 건너뜀</span>':"")+
    '<span class="msg"></span></div></div>'+
 
-   '<div class="hr"><div class="lbl"><b>우리 클럽 전력 '+prof.length+'명</b></div>'+
-   (prof.length?prof.map(e=>{
+   (D.orphans.length?'<div class="hr"><div class="lbl"><b>명단에 없는 기록</b><i>예전 클럽원이나 예시 자료</i></div>'+
+     '<div class="note">'+esc(D.orphans.slice(0,10).join(", "))+(D.orphans.length>10?" 외 "+(D.orphans.length-10)+"명":"")+
+     ' — 총 '+D.orphans.length+'명의 랭챌 기록이 남아 있습니다. 오더 계산에는 안 쓰이지만 목록이 지저분해집니다.</div>'+
+     '<div class="btnrow">'+btnH("btn-orphan","명단에 없는 기록 지우기","red")+'<span class="msg"></span></div></div>':"")+
+   '<div class="hr"><div class="lbl"><b>우리 클럽 전력 '+prof.filter(e=>D.ours.some(a=>a.name===e.name)).length+'명</b></div>'+
+   (prof.filter(e=>D.ours.some(a=>a.name===e.name)).length?prof.filter(e=>D.ours.some(a=>a.name===e.name)).map(e=>{
      const rz=rankZ(e.rank,e.games,st.cfg), wz=winZ(e.games,e.wins);
      const pw=st.cfg.kRank*rz+st.cfg.kWin*wz;
      const tr=e.hist.filter(h=>h.rank>0).map(h=>h.rank);
@@ -1130,6 +1153,16 @@ function bind(){
     st.oppsText=t; render(); flash("불러왔습니다 — 구장과 방어성공은 새로 확인하세요");
   });
 
+  on("btn-rcfill","click",()=>{
+    st.rcText=rcTemplate(st.rcSeasonSel); render(); flash("명단에서 이름을 다시 깔았습니다");
+  });
+  on("btn-orphan","click",async()=>{
+    if(!D.orphans.length)return;
+    if(!confirm("명단에 없는 "+D.orphans.length+"명의 랭챌 기록을 지울까요?"))return;
+    const n=D.orphans.length;
+    st.rcRecords=st.rcRecords.filter(r=>!D.orphans.some(o=>o===r.name));
+    await saveRc(); render(); flash(n+"명의 기록을 지웠습니다");
+  });
   on("btn-rcadd","click",async()=>{
     if(!D.rcStaged.rows.length){flash("추가할 기록이 없습니다");return;}
     const n=D.rcStaged.rows.length, sea=st.rcSeasonSel;
