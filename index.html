@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b5.5)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b5.6)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -63,13 +63,20 @@ input[type=range]{width:100%;accent-color:var(--amber);height:24px}
 label.ck{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:18px;cursor:pointer}
 button:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-visible{
   outline:2px solid var(--amber);outline-offset:2px}
+.acbox{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;min-height:0}
+.acb{background:#1E2A3D;color:var(--cyan);border:1px solid #3ECBE055;border-radius:14px;
+  padding:6px 12px;font-size:13px;font-family:var(--sans);cursor:pointer}
+.acb:active{background:#2A3B52}
+button.mv{background:#1E2A3D;color:var(--chalk);border:1px solid var(--line);border-radius:4px;
+  width:26px;height:26px;font-size:11px;line-height:1;cursor:pointer;padding:0}
+button.mv:disabled{opacity:.3;cursor:default}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 5.5 · 2026-08-03</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 5.6 · 2026-08-03</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -156,21 +163,23 @@ function roleOf(tok){const j=tok.join(" ");
   if(/오프너/.test(j))return"OPENER";
   if(/에이스|ACE/i.test(j))return"ACE";return"NONE";}
 
+const isResTok=t=>/^(예비|예비엔트리|대기)$/.test(t.trim());
 function parseOurs(text,rc,cfg){
   rc=rc||{}; const out=[];
   text.split(/\r?\n/).forEach((line,i)=>{
     if(!line.trim()||/^#/.test(line))return;
     const raw=cells(line); if(!raw.some(x=>x))return;
     const role=roleOf(raw.filter(isRoleTok));
-    const c=raw.filter(t=>!isRoleTok(t));
+    const reserve=raw.some(isResTok);
+    const c=raw.filter(t=>!isRoleTok(t)&&!isResTok(t));
     if(!c[0])return;
-    const atk=num(c[2]);
+    const atk=reserve?0:num(c[2]);
     const pr=rc[c[0]];
     const rank=(pr&&pr.rank)||0, games=pr?pr.games:0, wins=pr?pr.wins:0;
-    out.push({id:"A"+i,name:c[0],role,rank,games,wins,hasRc:!!pr,
+    out.push({id:"A"+i,name:c[0],role,reserve,rank,games,wins,hasRc:!!pr,
       rz:rankZ(rank,games,cfg),wz:winZ(games,wins),
       ovr:num(c[1])!=null?num(c[1]):120,
-      atk:(atk!=null&&atk>=0&&atk<=3)?atk:3});
+      atk:reserve?0:((atk!=null&&atk>=0&&atk<=3)?atk:3)});
   });
   return out;
 }
@@ -638,8 +647,8 @@ const st={
   rcText:"", rcSeasonSel:0, rcRecords:S_RC.slice(),
   oppDb:{}, oppClub:"Keystone", clubSel:"", oppRcText:"",
   warSeason:104, records:[],
-  renameFrom:"", renameTo:"", msg:"",
-  cfg:{subOvr:112, subNote:"", anchorSeason:227, anchorDate:"2026-08-03",
+  renameFrom:"", renameTo:"", msg:"", sortMode:"power",
+  cfg:{subOvr:112, subNote:"", anchorSeason:227, anchorDate:"2026-08-03", order:[],
     oppGames:40, kRank:1.1, kOvr:.08, kWin:1, kGames:.5, bias:.9,
     subPenalty:.8, blindPenalty:.2, chipW:.3, captureBias:1, revealValue:.4,
     target:180, homeStadium:"대구", allowRepeat:true}
@@ -678,6 +687,45 @@ function rcTemplate(season){
     const r=st.rcRecords.find(x=>x.name===a.name&&x.season===season);
     return r?[a.name,r.rank||"",r.w||0,r.d||0,r.l||0].join("\t"):a.name;
   }).join("\n");
+}
+
+/* ── 닉네임 자동완성 (기록 탭) ── */
+function acPool(col){
+  if(col===0)return D.ours.map(a=>a.name);
+  const set={};
+  Object.keys(st.oppDb).forEach(n=>set[n]=1);
+  st.records.forEach(r=>{if(r.d)set[r.d]=1;});
+  D.opps.forEach(d=>set[d.name]=1);
+  return Object.keys(set);
+}
+function acContext(el){
+  const pos=el.selectionStart;
+  const before=el.value.slice(0,pos);
+  const ls=before.lastIndexOf("\n")+1;
+  const line=before.slice(ls);
+  const seg=line.split(/[\t,]/);
+  const tok=seg[seg.length-1];
+  return {col:seg.length-1, token:tok, start:ls+line.length-tok.length, pos:pos};
+}
+function acUpdate(){
+  const el=document.getElementById("ta-log"), box=document.getElementById("ac");
+  if(!el||!box)return;
+  const c=acContext(el), t=(c.token||"").trim();
+  if(c.col>1||!t){box.innerHTML="";return;}
+  const pool=acPool(c.col);
+  const lower=t.toLowerCase();
+  let hit=pool.filter(n=>n!==t&&n.toLowerCase().indexOf(lower)===0);
+  if(!hit.length)hit=pool.filter(n=>n!==t&&n.toLowerCase().indexOf(lower)>=0);
+  box.innerHTML=hit.slice(0,8).map(n=>'<button class="acb" data-n="'+esc(n)+'">'+esc(n)+'</button>').join("");
+}
+function acInsert(name){
+  const el=document.getElementById("ta-log"); if(!el)return;
+  const c=acContext(el), v=el.value;
+  el.value=v.slice(0,c.start)+name+"\t"+v.slice(c.pos);
+  const np=c.start+name.length+1;
+  el.selectionStart=el.selectionEnd=np;
+  st.logText=el.value;
+  el.focus(); acUpdate();
 }
 
 /* ── 표시 도구 ── */
@@ -800,16 +848,31 @@ const btnH=(id,label,color)=>'<button class="act" id="'+id+'" style="color:var(-
 /* ① 우리팀 전력 */
 function viewOurs(){
   const o=D.ours, noRc=o.filter(a=>!a.hasRc);
+  const active=o.filter(a=>!a.reserve), res=o.filter(a=>a.reserve);
   const seasons={}; st.rcRecords.forEach(r=>{seasons[r.season]=(seasons[r.season]||0)+1;});
   let opts="";
   for(let i=SEASON_MAX;i>=SEASON_MIN;i--)
     opts+='<option value="'+i+'" '+(i===st.rcSeasonSel?"selected":"")+'>'+i+' 시즌'+
       (seasons[i]?" · "+seasons[i]+"명":"")+(i===D.rcNow.num?" (진행 중)":"")+'</option>';
-  const prof=Object.keys(D.rc).map(k=>D.rc[k]).sort((a,b)=>(a.rank||9e9)-(b.rank||9e9));
+  const pw=e=>st.cfg.kRank*rankZ(e.rank,e.games,st.cfg)+st.cfg.kWin*winZ(e.games,e.wins);
+  let prof=Object.keys(D.rc).map(k=>D.rc[k]).filter(e=>D.ours.some(a=>a.name===e.name));
+  if(st.sortMode==="manual"){
+    const ord=st.cfg.order||[];
+    prof.sort((a,b)=>{
+      const ia=ord.indexOf(a.name), ib=ord.indexOf(b.name);
+      if(ia<0&&ib<0)return pw(b)-pw(a);
+      if(ia<0)return 1; if(ib<0)return -1; return ia-ib;
+    });
+  } else prof.sort((a,b)=>pw(b)-pw(a));
 
   return '<div class="fld"><div class="lbl"><b>클럽원 명단</b><i>닉네임 · OVR · 역할</i></div>'+
    '<textarea id="ta-ours">'+esc(st.oursText)+'</textarea></div>'+
-   '<div class="note">역할은 <b>에이스</b> · <b>에이스킬러</b> · <b>오프너</b>를 그대로 적으면 됩니다. OVR은 후보 제외한 주전 기준. 남은 공격 횟수를 넣으려면 OVR 뒤에 숫자를 하나 더 적으세요(비우면 3회).</div>'+
+   '<div class="note">역할은 <b>에이스</b> · <b>에이스킬러</b> · <b>오프너</b>, 예비 엔트리는 <b>예비</b>라고 적으면 됩니다. OVR은 후보 제외한 주전 기준. 남은 공격 횟수를 넣으려면 OVR 뒤에 숫자를 하나 더 적으세요(비우면 3회).</div>'+
+   '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+
+   chip("출전 "+active.length+"명",active.length===20?"green":"amber")+
+   chip("예비 "+res.length+"명"+(res.length?" · "+esc(res.map(a=>a.name).join(", ")):""),res.length?"violet":"dim")+
+   chip("공격 "+active.reduce((t,a)=>t+a.atk,0)+"회","cyan")+
+   (o.length>21?chip("정원 21명 초과","red"):"")+'</div>'+
    (noRc.length?'<div class="note" style="color:var(--red)">랭챌 기록이 없는 '+noRc.length+'명은 실력을 평균으로 봅니다 — '+
      esc(noRc.slice(0,6).map(a=>a.name).join(", "))+(noRc.length>6?" 외":"")+'</div>':"")+
    '<div class="btnrow">'+btnH("btn-save","명단 저장","amber")+'<span class="msg"></span></div>'+
@@ -839,20 +902,32 @@ function viewOurs(){
      '<div class="note">'+esc(D.orphans.slice(0,10).join(", "))+(D.orphans.length>10?" 외 "+(D.orphans.length-10)+"명":"")+
      ' — 총 '+D.orphans.length+'명의 랭챌 기록이 남아 있습니다. 오더 계산에는 안 쓰이지만 목록이 지저분해집니다.</div>'+
      '<div class="btnrow">'+btnH("btn-orphan","명단에 없는 기록 지우기","red")+'<span class="msg"></span></div></div>':"")+
-   '<div class="hr"><div class="lbl"><b>우리 클럽 전력 '+prof.filter(e=>D.ours.some(a=>a.name===e.name)).length+'명</b></div>'+
-   (prof.filter(e=>D.ours.some(a=>a.name===e.name)).length?prof.filter(e=>D.ours.some(a=>a.name===e.name)).map(e=>{
-     const rz=rankZ(e.rank,e.games,st.cfg), wz=winZ(e.games,e.wins);
-     const pw=st.cfg.kRank*rz+st.cfg.kWin*wz;
+   '<div class="hr"><div class="lbl"><b>우리 클럽 전력 '+prof.length+'명</b>'+
+   '<i>'+(st.sortMode==="manual"?"직접 정렬":"실력순")+'</i></div>'+
+   '<div class="btnrow" style="margin-bottom:10px">'+
+   btnH("btn-sort",st.sortMode==="manual"?"실력순으로 보기":"직접 정렬하기",st.sortMode==="manual"?"cyan":"violet")+
+   (st.sortMode==="manual"?btnH("btn-sortreset","순서 초기화","dim"):"")+'<span class="msg"></span></div>'+
+   (prof.length?prof.map((e,i)=>{
+     const v=pw(e);
      const tr=e.hist.filter(h=>h.rank>0).map(h=>h.rank);
      const ar=tr.length>1?(tr[0]<tr[1]?"▲":tr[0]>tr[1]?"▼":"–"):"";
      const me=D.ours.find(a=>a.name===e.name);
-     return '<div class="row"><span class="nm">'+esc(e.name)+'</span>'+
+     const thin=e.games<25;
+     return '<div class="row">'+
+       (st.sortMode==="manual"
+         ?'<span style="display:flex;gap:2px;margin-right:4px">'+
+          '<button class="mv" data-up="'+esc(e.name)+'"'+(i===0?" disabled":"")+'>▲</button>'+
+          '<button class="mv" data-dn="'+esc(e.name)+'"'+(i===prof.length-1?" disabled":"")+'>▼</button></span>'
+         :'<span class="mini" style="width:20px;flex-shrink:0">'+(i+1)+'</span>')+
+       '<span class="nm">'+esc(e.name)+'</span>'+
+       (me&&me.reserve?chip("예비","violet"):"")+
        (me&&me.role!=="NONE"?chip(ROLE_LABEL[me.role],ROLE_TONE[me.role]):"")+
        chip(ar+"#"+e.rank.toLocaleString(),"amber")+
-       chip(e.games+"판 "+Math.round(e.wr*100)+"%",e.wr>=.6?"green":e.wr>=.5?"cyan":"dim")+
-       chip("실력 "+(pw>=0?"+":"")+pw.toFixed(2),pw>.6?"green":pw>-.3?"cyan":"red")+
-       chip(e.seasons+"시즌","dim")+'</div>';
-   }).join(""):'<div class="note" style="margin:0">아직 랭챌 기록이 없습니다.</div>')+'</div>';
+       chip(e.games+"판 "+Math.round(e.wr*100)+"%",thin?"amber":e.wr>=.6?"green":"cyan")+
+       chip("실력 "+(v>=0?"+":"")+v.toFixed(2),v>.6?"green":v>-.3?"cyan":"red")+
+       (thin?chip("표본 적음","amber"):"")+'</div>';
+   }).join(""):'<div class="note" style="margin:0">아직 랭챌 기록이 없습니다.</div>')+
+   '<div class="note" style="margin-top:10px">판수가 25판 미만이면 <b>표본 적음</b>으로 표시됩니다. 실력 지수가 낮게 나와도 실제로는 강할 수 있으니, 직접 정렬로 자리를 옮겨 두면 오더를 검토할 때 참고가 됩니다.</div></div>';
 }
 
 /* ② 상대팀 전력 */
@@ -1024,8 +1099,9 @@ function viewLog(){
    '<div class="fld"><div class="lbl"><b>상대 클럽명</b></div>'+
    '<input type="text" id="in-club3" value="'+esc(st.oppClub)+'" placeholder="예: Keystone"></div>'+
    '<div class="fld"><div class="lbl"><b>대전 결과</b><i>우리이름 · 상대이름 · 승패 · 점수</i></div>'+
-   '<textarea id="ta-log" placeholder="한방에간다&#9;뚜뚜&#9;승&#9;3-1">'+esc(st.logText)+'</textarea></div>'+
-   '<div class="note">점수는 <b>3-1</b>처럼 적으면 됩니다(생략 가능). 순위·승률은 두 탭의 자료에서 자동으로 채웁니다. 클라로 쳤으면 줄에 <b>클라</b>, 상대가 클라였으면 <b>상대클라</b>를 적으세요.</div>'+
+   '<textarea id="ta-log" placeholder="한방에간다&#9;뚜뚜&#9;승&#9;3-1">'+esc(st.logText)+'</textarea>'+
+   '<div id="ac" class="acbox"></div></div>'+
+   '<div class="note">닉네임을 한두 글자만 치면 아래에 후보가 뜹니다. 눌러서 넣으세요. 점수는 <b>3-1</b>처럼 적으면 됩니다(생략 가능). 순위·승률은 두 탭의 자료에서 자동으로 채웁니다. 클라로 쳤으면 줄에 <b>클라</b>, 상대가 클라였으면 <b>상대클라</b>를 적으세요.</div>'+
    '<div class="btnrow">'+btnH("btn-add","기록 "+D.staged.rows.length+"건 추가","green")+
    (D.staged.bad.length?'<span style="font-size:12px;color:var(--red)">'+D.staged.bad.length+'줄 건너뜀</span>':"")+
    '<span class="msg"></span></div>'+
@@ -1101,8 +1177,17 @@ function bind(){
   on("ta-ours","blur",render);
   on("ta-opps","input",e=>{st.oppsText=e.target.value;});
   on("ta-opps","blur",render);
-  on("ta-log","input",e=>{st.logText=e.target.value;});
-  on("ta-log","blur",render);
+  on("ta-log","input",e=>{st.logText=e.target.value;acUpdate();});
+  on("ta-log","click",acUpdate);
+  on("ta-log","keyup",acUpdate);
+  on("ta-log","blur",()=>{setTimeout(()=>{
+    const b=document.getElementById("ac"); if(b&&b.dataset.hold==="1"){b.dataset.hold="";return;}
+    render();},120);});
+  const acbox=document.getElementById("ac");
+  if(acbox)acbox.addEventListener("mousedown",e=>{
+    const b=e.target.closest(".acb"); if(!b)return;
+    e.preventDefault(); acbox.dataset.hold="1"; acInsert(b.dataset.n);
+  });
   on("ta-rc","input",e=>{st.rcText=e.target.value;});
   on("ta-rc","blur",render);
   on("ta-subnote","input",e=>{st.cfg.subNote=e.target.value;});
@@ -1153,6 +1238,28 @@ function bind(){
     st.oppsText=t; render(); flash("불러왔습니다 — 구장과 방어성공은 새로 확인하세요");
   });
 
+  on("btn-sort","click",()=>{
+    st.sortMode=st.sortMode==="manual"?"power":"manual";
+    if(st.sortMode==="manual"&&!(st.cfg.order||[]).length){
+      const pw=e=>st.cfg.kRank*rankZ(e.rank,e.games,st.cfg)+st.cfg.kWin*winZ(e.games,e.wins);
+      st.cfg.order=Object.keys(D.rc).map(k=>D.rc[k])
+        .filter(e=>D.ours.some(a=>a.name===e.name))
+        .sort((a,b)=>pw(b)-pw(a)).map(e=>e.name);
+    }
+    render();
+  });
+  on("btn-sortreset","click",async()=>{st.cfg.order=[];await saveAll();render();});
+  document.querySelectorAll(".mv").forEach(b=>{
+    b.addEventListener("click",async()=>{
+      const ord=(st.cfg.order||[]).slice();
+      const nm=b.dataset.up||b.dataset.dn;
+      const i=ord.indexOf(nm); if(i<0)return;
+      const j=b.dataset.up?i-1:i+1;
+      if(j<0||j>=ord.length)return;
+      ord[i]=ord[j]; ord[j]=nm;
+      st.cfg.order=ord; await saveAll(); render();
+    });
+  });
   on("btn-rcfill","click",()=>{
     st.rcText=rcTemplate(st.rcSeasonSel); render(); flash("명단에서 이름을 다시 깔았습니다");
   });
