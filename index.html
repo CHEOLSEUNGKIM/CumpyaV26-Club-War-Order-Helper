@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b6.1)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b6.2)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.1 · 2026-08-04</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.2 · 2026-08-04</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -694,7 +694,7 @@ const st={
   tab:0, oursText:S_OURS, oppsText:S_OPPS, logText:"",
   rcText:"", rcSeasonSel:0, rcRecords:S_RC.slice(),
   oppDb:{}, oppClub:"Keystone", clubSel:"", live:{},
-  warSel:0, editWar:null, logAtk:"", logDef:"", records:[], warResults:[], scoreUs:"", scoreThem:"",
+  warSel:0, editWar:null, logAtk:"", logDef:"", sel:{}, logFilter:"cur", records:[], warResults:[], scoreUs:"", scoreThem:"",
   renameFrom:"", renameTo:"", msg:"", sortMode:"power", oppAdj:false,
   cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, warSeasonNow:104,
     oppGames:40, kRank:1.1, kOvr:.08, kWin:1, kGames:.5, bias:.9,
@@ -810,6 +810,14 @@ function slider(id,label,val,min,max,step,fmt){
 function flash(t){st.msg=t;paintMsg();setTimeout(()=>{st.msg="";paintMsg();},2600);}
 function paintMsg(){document.querySelectorAll(".msg").forEach(e=>e.textContent=st.msg);}
 
+/* 기록마다 고정 식별자를 붙인다 — 삭제해도 다른 줄이 밀리지 않게 */
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+function ensureIds(){
+  let n=0;
+  st.records.forEach(r=>{if(!r.rid){r.rid=uid();n++;}});
+  return n;
+}
+
 /* ── 백업 ── */
 const stamp=t=>{const d=new Date(t);
   return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+
@@ -897,8 +905,10 @@ async function load(){
   const seed=(typeof window!=="undefined"&&window.__SEED__)||null;
   /* 더 최근 것을 쓴다 */
   const useSeed=seed&&(!stored||(seed.ts||0)>=(stored.ts||0));
+  if(1){}
   applySnapshot(useSeed?seed:(stored||seed));
   st.seeded=!!useSeed;
+  if(ensureIds())await saveLog();
   st.seedTs=seed?(seed.built||stamp(seed.ts||0)):null;
   st.storedTs=stored?(stored.built||(stored.ts?stamp(stored.ts):null)):null;
 }
@@ -1260,24 +1270,35 @@ function viewLog(){
 
    fitBox+
 
-   '<div class="hr"><div class="lbl"><b>저장된 기록 '+st.records.length+'건</b><i>×를 눌러 삭제</i></div>'+
-   (recent.length?recent.map(o=>{
-     const r=o.r;
-     return '<div class="row"><button class="mv" data-del="'+o.i+'" style="margin-right:6px;color:var(--red)">×</button>'+
-       '<span class="nm">'+esc(r.a)+' → '+esc(r.d)+'</span>'+
-       chip(r.dir==="def"?"수비":"공격",r.dir==="def"?"violet":"cyan")+
-       (r.club?chip(r.club,"dim"):"")+chip(r.season+"","dim")+
-       (r.runsFor!=null?chip(r.runsFor+"-"+r.runsAgainst,"cyan"):"")+
-       chip(r.win?"승":"패",r.win?"green":"red")+'</div>';
-   }).join(""):'<div class="note" style="margin:0">아직 없습니다.</div>')+
-   (st.records.length>30?'<div class="note">최근 30건만 보여줍니다.</div>':"")+'</div>'+
-
-   '<div class="btnrow" style="margin-top:16px">'+btnH("btn-exp","전체 기록 복사","cyan")+
-   btnH("btn-delseason",st.warSel+"시즌 "+(st.oppClub||"?")+" 기록 "+
-     st.records.filter(r=>r.season===st.warSel&&(r.club||"")===st.oppClub).length+"건 삭제",
-     st.records.some(r=>r.season===st.warSel&&(r.club||"")===st.oppClub)?"red":"dim")+
-   '<span class="msg"></span></div>'+
-   '<textarea readonly style="margin-top:12px;min-height:100px;color:var(--dim)">'+esc(logExport())+'</textarea>';
+   '<div class="hr">'+
+   (function(){
+     const cur=r=>r.season===st.warSel&&(r.club||"")===st.oppClub;
+     const list=st.records.map((r,i)=>({r,i})).filter(o=>st.logFilter==="all"||cur(o.r)).reverse();
+     const shown=list.slice(0,80);
+     const nSel=Object.keys(st.sel).filter(k=>st.sel[k]).length;
+     const allOn=shown.length>0&&shown.every(o=>st.sel[o.r.rid]);
+     return '<div class="lbl"><b>저장된 기록</b><i>'+st.records.length+'건 중 '+list.length+'건 표시</i></div>'+
+       '<div class="btnrow" style="margin-bottom:10px">'+
+       btnH("btn-fil-cur",st.warSel+" "+(st.oppClub||"클럽없음"),st.logFilter==="cur"?"amber":"dim")+
+       btnH("btn-fil-all","전체",st.logFilter==="all"?"amber":"dim")+'</div>'+
+       '<div class="btnrow" style="margin-bottom:10px">'+
+       btnH("btn-selall",allOn?"전체 해제":"전체 선택",allOn?"dim":"cyan")+
+       btnH("btn-delsel",nSel?"선택 "+nSel+"건 삭제":"선택 없음",nSel?"red":"dim")+
+       btnH("btn-exp","복사","cyan")+'<span class="msg"></span></div>'+
+       (shown.length?shown.map(o=>{
+         const r=o.r, on=!!st.sel[r.rid];
+         return '<div class="row rowsel" data-rid="'+esc(r.rid)+'" style="cursor:pointer;'+
+           (on?"background:#1E2A3D":"")+'">'+
+           '<span style="width:22px;flex-shrink:0;color:'+(on?"var(--cyan)":"var(--dim)")+
+           ';font-family:var(--mono)">'+(on?"☑":"☐")+'</span>'+
+           '<span class="nm">'+esc(r.a)+' → '+esc(r.d)+'</span>'+
+           chip(r.dir==="def"?"수비":"공격",r.dir==="def"?"violet":"cyan")+
+           (st.logFilter==="all"?chip(r.season+" "+(r.club||"-"),"dim"):"")+
+           (r.runsFor!=null?chip(r.runsFor+"-"+r.runsAgainst,"dim"):"")+
+           chip(r.win?"승":"패",r.win?"green":"red")+'</div>';
+       }).join(""):'<div class="note" style="margin:0">해당 기록이 없습니다.</div>')+
+       (list.length>80?'<div class="note">최근 80건만 보여줍니다.</div>':"");
+   })()+'</div>';
 }
 
 /* ⑤ 설정 */
@@ -1498,10 +1519,15 @@ function bind(){
   on("btn-warcancel","click",()=>{st.editWar=null;st.scoreUs="";st.scoreThem="";render();});
   on("btn-wardel","click",async()=>{
     const i=st.editWar; const r=st.warResults[i]; if(!r)return;
-    if(!confirm(r.season+"시즌 "+(r.club||"?")+" "+r.us+":"+r.them+" 을 지울까요?"))return;
+    const match=x=>x.season===r.season&&(x.club||"")===(r.club||"");
+    const n=st.records.filter(match).length;
+    const label=r.season+"시즌 "+(r.club||"?")+" "+r.us+":"+r.them;
+    if(!confirm(n?label+" 최종 점수와 대전 기록 "+n+"건을 함께 지울까요?":label+" 을 지울까요?"))return;
     st.warResults=st.warResults.filter((x,k)=>k!==i);
+    if(n)st.records=st.records.filter(x=>!match(x));
     st.editWar=null; st.scoreUs=""; st.scoreThem="";
-    await saveWar(); render(); flash("최종 점수를 지웠습니다");
+    await saveWar(); if(n)await saveLog();
+    render(); flash(n?"최종 점수와 기록 "+n+"건을 지웠습니다":"최종 점수를 지웠습니다");
   });
   on("in-su","input",e=>{st.scoreUs=e.target.value;});
   on("in-st","input",e=>{st.scoreThem=e.target.value;});
@@ -1523,6 +1549,7 @@ function bind(){
       msg.push(u>t?"승리":u<t?"패배":"무승부");
     }
     if(rows.length){
+      rows.forEach(r=>{r.rid=uid();});
       st.records=st.records.concat(rows);
       st.logAtk=""; st.logDef="";
       await saveLog();
@@ -1530,27 +1557,30 @@ function bind(){
     }
     render(); flash(st.warSel+"시즌 "+msg.join(" · ")+" 저장 — 누적 "+st.records.length+"건");
   });
-  document.querySelectorAll("[data-del]").forEach(b=>{
-    b.addEventListener("click",async()=>{
-      const i=parseInt(b.dataset.del,10);
-      if(isNaN(i)||!st.records[i])return;
-      const r=st.records[i];
-      if(!confirm(r.a+" → "+r.d+" 기록을 지울까요?"))return;
-      st.records=st.records.filter((x,k)=>k!==i);
-      await saveLog(); render(); flash("1건 지웠습니다");
+  on("btn-fil-cur","click",()=>{st.logFilter="cur";render();});
+  on("btn-fil-all","click",()=>{st.logFilter="all";render();});
+  document.querySelectorAll(".rowsel").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const id=el.dataset.rid;
+      const m=Object.assign({},st.sel);
+      if(m[id])delete m[id]; else m[id]=true;
+      st.sel=m; render();
     });
   });
-  on("btn-delseason","click",async()=>{
-    const match=r=>r.season===st.warSel&&(r.club||"")===st.oppClub;
-    const n=st.records.filter(match).length;
-    if(!n){
-      const other=[...new Set(st.records.map(r=>r.season+" "+(r.club||"클럽없음")))];
-      flash(other.length?"해당 기록이 없습니다 — 저장된 것: "+other.slice(0,3).join(", "):"저장된 기록이 없습니다");
-      return;
-    }
-    if(!confirm(st.warSel+"시즌 "+st.oppClub+" 기록 "+n+"건을 지울까요?"))return;
-    st.records=st.records.filter(r=>!match(r));
-    await saveLog(); render(); flash(n+"건 지웠습니다");
+  on("btn-selall","click",()=>{
+    const cur=r=>r.season===st.warSel&&(r.club||"")===st.oppClub;
+    const list=st.records.filter(r=>st.logFilter==="all"||cur(r)).slice(-80);
+    const allOn=list.length>0&&list.every(r=>st.sel[r.rid]);
+    const m=Object.assign({},st.sel);
+    list.forEach(r=>{if(allOn)delete m[r.rid]; else m[r.rid]=true;});
+    st.sel=m; render();
+  });
+  on("btn-delsel","click",async()=>{
+    const ids=Object.keys(st.sel).filter(k=>st.sel[k]);
+    if(!ids.length){flash("선택된 기록이 없습니다");return;}
+    if(!confirm("선택한 "+ids.length+"건을 지울까요?"))return;
+    st.records=st.records.filter(r=>ids.indexOf(r.rid)<0);
+    st.sel={}; await saveLog(); render(); flash(ids.length+"건 지웠습니다");
   });
   on("btn-dlhtml","click",downloadHtml);
   on("btn-reload","click",()=>{
