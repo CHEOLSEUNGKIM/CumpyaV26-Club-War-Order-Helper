@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b6.0)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b6.1)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.0 · 2026-08-04</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.1 · 2026-08-04</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -694,7 +694,7 @@ const st={
   tab:0, oursText:S_OURS, oppsText:S_OPPS, logText:"",
   rcText:"", rcSeasonSel:0, rcRecords:S_RC.slice(),
   oppDb:{}, oppClub:"Keystone", clubSel:"", live:{},
-  warSel:0, logAtk:"", logDef:"", records:[], warResults:[], scoreUs:"", scoreThem:"",
+  warSel:0, editWar:null, logAtk:"", logDef:"", records:[], warResults:[], scoreUs:"", scoreThem:"",
   renameFrom:"", renameTo:"", msg:"", sortMode:"power", oppAdj:false,
   cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, warSeasonNow:104,
     oppGames:40, kRank:1.1, kOvr:.08, kWin:1, kGames:.5, bias:.9,
@@ -1186,9 +1186,11 @@ function viewLog(){
   const f=D.fit;
   let opts="";
   const now=st.cfg.warSeasonNow;
-  for(let i=now;i>now-5;i--)
+  const cnt={};
+  st.records.forEach(r=>{cnt[r.season]=(cnt[r.season]||0)+1;});
+  for(let i=now;i>now-6;i--)
     opts+='<option value="'+i+'" '+(i===st.warSel?"selected":"")+'>'+i+' 시즌'+
-      (i===now?" (현재)":"")+'</option>';
+      (i===now?" (현재)":"")+(cnt[i]?" · "+cnt[i]+"건":"")+'</option>';
 
   const wl=st.warResults.reduce((t,r)=>{t[r.us>r.them?"w":r.us<r.them?"l":"d"]++;return t;},{w:0,l:0,d:0});
   const nA=D.stAtk.rows.length, nD=D.stDef.rows.length;
@@ -1228,10 +1230,19 @@ function viewLog(){
    '<span style="color:var(--dim)">:</span>'+
    '<input type="text" id="in-st" inputmode="numeric" value="'+esc(st.scoreThem)+'" placeholder="192" style="width:80px">'+
    '<span style="font-size:13px;white-space:nowrap">상대</span></div>'+
-   (st.warResults.length?'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">'+
-     chip("통산 "+wl.w+"승 "+wl.l+"패"+(wl.d?" "+wl.d+"무":""),wl.w>=wl.l?"green":"red")+
-     st.warResults.slice(-5).reverse().map(r=>chip(r.season+" "+(r.club||"?")+" "+r.us+":"+r.them,
-       r.us>r.them?"green":r.us<r.them?"red":"dim")).join("")+'</div>':"")+'</div>'+
+   (st.editWar!=null?'<div class="note" style="color:var(--violet);margin:10px 0 0">'+
+     '수정 중 — 위 칸을 고치고 저장하면 이 경기가 갱신됩니다.</div>'+
+     '<div class="btnrow" style="margin-top:10px">'+btnH("btn-warcancel","수정 취소","dim")+
+     btnH("btn-wardel","이 경기 삭제","red")+'</div>':"")+
+   (st.warResults.length?'<div style="margin-top:12px">'+
+     '<div class="mini" style="margin-bottom:6px">눌러서 수정 · 통산 '+wl.w+'승 '+wl.l+'패'+(wl.d?" "+wl.d+"무":"")+'</div>'+
+     '<div style="display:flex;flex-wrap:wrap;gap:6px">'+
+     st.warResults.map((r,i)=>({r,i})).sort((x,y)=>y.r.season-x.r.season).slice(0,10)
+      .map(o=>'<button class="acb" data-war="'+o.i+'" style="color:'+
+        (st.editWar===o.i?"var(--violet)":o.r.us>o.r.them?"var(--green)":o.r.us<o.r.them?"var(--red)":"var(--dim)")+
+        ';border-color:'+(st.editWar===o.i?"var(--violet)":"#2C3A50")+'">'+
+        esc(o.r.season+" "+(o.r.club||"?")+" "+o.r.us+":"+o.r.them)+'</button>').join("")+
+     '</div></div>':"")+'</div>'+
 
    '<div class="fld"><div class="lbl"><b>우리가 공격</b><i>우리이름 · 상대이름 · 스코어</i></div>'+
    '<textarea id="ta-atk" style="min-height:150px" placeholder="한방에간다&#9;뚜뚜&#9;5-2">'+esc(st.logAtk)+'</textarea>'+
@@ -1262,7 +1273,10 @@ function viewLog(){
    (st.records.length>30?'<div class="note">최근 30건만 보여줍니다.</div>':"")+'</div>'+
 
    '<div class="btnrow" style="margin-top:16px">'+btnH("btn-exp","전체 기록 복사","cyan")+
-   btnH("btn-delseason",st.warSel+"시즌 "+(st.oppClub||"?")+" 기록 삭제","red")+'</div>'+
+   btnH("btn-delseason",st.warSel+"시즌 "+(st.oppClub||"?")+" 기록 "+
+     st.records.filter(r=>r.season===st.warSel&&(r.club||"")===st.oppClub).length+"건 삭제",
+     st.records.some(r=>r.season===st.warSel&&(r.club||"")===st.oppClub)?"red":"dim")+
+   '<span class="msg"></span></div>'+
    '<textarea readonly style="margin-top:12px;min-height:100px;color:var(--dim)">'+esc(logExport())+'</textarea>';
 }
 
@@ -1359,7 +1373,7 @@ function bind(){
   on("in-rn-to","input",e=>{st.renameTo=e.target.value;});
   on("sel-home","change",e=>{st.cfg.homeStadium=e.target.value;render();});
   on("sel-season","change",e=>{st.rcSeasonSel=parseInt(e.target.value,10);render();});
-  on("sel-war","change",e=>{st.warSel=parseInt(e.target.value,10);render();});
+  on("sel-war","change",e=>{st.warSel=parseInt(e.target.value,10);st.editWar=null;render();});
   on("sel-club","change",e=>{
     if(!e.target.value)return;
     st.oppClub=e.target.value;
@@ -1471,6 +1485,24 @@ function bind(){
     await saveRc(); await saveLog(); await saveOpp(); render();
     flash(n+"건을 '"+t+"'으로 옮겼습니다");
   });
+  document.querySelectorAll("[data-war]").forEach(b=>{
+    b.addEventListener("click",()=>{
+      const i=parseInt(b.dataset.war,10);
+      const r=st.warResults[i]; if(!r)return;
+      if(st.editWar===i){st.editWar=null;st.scoreUs="";st.scoreThem="";render();return;}
+      st.editWar=i; st.warSel=r.season; st.oppClub=r.club||"";
+      st.scoreUs=String(r.us); st.scoreThem=String(r.them);
+      render();
+    });
+  });
+  on("btn-warcancel","click",()=>{st.editWar=null;st.scoreUs="";st.scoreThem="";render();});
+  on("btn-wardel","click",async()=>{
+    const i=st.editWar; const r=st.warResults[i]; if(!r)return;
+    if(!confirm(r.season+"시즌 "+(r.club||"?")+" "+r.us+":"+r.them+" 을 지울까요?"))return;
+    st.warResults=st.warResults.filter((x,k)=>k!==i);
+    st.editWar=null; st.scoreUs=""; st.scoreThem="";
+    await saveWar(); render(); flash("최종 점수를 지웠습니다");
+  });
   on("in-su","input",e=>{st.scoreUs=e.target.value;});
   on("in-st","input",e=>{st.scoreThem=e.target.value;});
   on("btn-saveall","click",async()=>{
@@ -1480,9 +1512,13 @@ function bind(){
     if(!hasScore&&!rows.length){flash("저장할 내용이 없습니다");return;}
     const msg=[];
     if(hasScore){
-      st.warResults=st.warResults.filter(r=>!(r.season===st.warSel&&r.club===st.oppClub));
-      st.warResults.push({season:st.warSel,club:st.oppClub,us:u,them:t,ts:Date.now()});
-      st.scoreUs=""; st.scoreThem="";
+      const rec={season:st.warSel,club:st.oppClub,us:u,them:t,ts:Date.now()};
+      if(st.editWar!=null&&st.warResults[st.editWar]) st.warResults[st.editWar]=rec;
+      else{
+        st.warResults=st.warResults.filter(r=>!(r.season===st.warSel&&r.club===st.oppClub));
+        st.warResults.push(rec);
+      }
+      st.editWar=null; st.scoreUs=""; st.scoreThem="";
       await saveWar();
       msg.push(u>t?"승리":u<t?"패배":"무승부");
     }
@@ -1505,10 +1541,15 @@ function bind(){
     });
   });
   on("btn-delseason","click",async()=>{
-    const n=st.records.filter(r=>r.season===st.warSel&&r.club===st.oppClub).length;
-    if(!n){flash("지울 기록이 없습니다");return;}
+    const match=r=>r.season===st.warSel&&(r.club||"")===st.oppClub;
+    const n=st.records.filter(match).length;
+    if(!n){
+      const other=[...new Set(st.records.map(r=>r.season+" "+(r.club||"클럽없음")))];
+      flash(other.length?"해당 기록이 없습니다 — 저장된 것: "+other.slice(0,3).join(", "):"저장된 기록이 없습니다");
+      return;
+    }
     if(!confirm(st.warSel+"시즌 "+st.oppClub+" 기록 "+n+"건을 지울까요?"))return;
-    st.records=st.records.filter(r=>!(r.season===st.warSel&&r.club===st.oppClub));
+    st.records=st.records.filter(r=>!match(r));
     await saveLog(); render(); flash(n+"건 지웠습니다");
   });
   on("btn-dlhtml","click",downloadHtml);
