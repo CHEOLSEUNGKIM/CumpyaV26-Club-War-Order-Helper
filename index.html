@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b5.8)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b5.9)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 5.8 · 2026-08-04</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 5.9 · 2026-08-04</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -530,20 +530,25 @@ function allocate(ours,opps,cfg,ctx,S){
   const maxOf=d=>(d.ace?12:10);
   const unitsFor=a=>{
     const u=[Object.assign({},a,{isSub:false,label:a.name})];
-    if(cfg.subOvr>0)u.push(Object.assign({},a,{ovr:cfg.subOvr,isSub:true,label:a.name+" 클라"}));
+    if(cfg.subOvr>0&&!a.reserve)u.push(Object.assign({},a,{ovr:cfg.subOvr,isSub:true,label:a.name+" 클라"}));
     return u;
   };
-  const E={},drop={},oUsed={},opened={},left={};
+  const E={},drop={},oUsed={},opened={},left={},subBy={};
   opps.forEach(d=>{E[d.id]=d.taken;drop[d.id]=0;oUsed[d.id]=false;opened[d.id]=false;});
-  ours.forEach(a=>{left[a.id]=a.atk;});
+  ours.forEach(a=>{left[a.id]=a.atk;subBy[a.id]=0;});
+  /* 클라는 3회 공격과 별개로 주어지는 자원이다 */
+  const perMax=cfg.subPerPerson||2;
+  let subLeft=(cfg.subOvr>0)?(cfg.subPool||6):0;
 
   const assigns=[];
-  const slots=ours.reduce((t,a)=>t+a.atk,0);
+  const slots=ours.reduce((t,a)=>t+a.atk,0)+subLeft;
   for(let step=0;step<slots;step++){
     let best=null;
     for(const a of ours){
-      if(left[a.id]<=0)continue;
+      if(left[a.id]<=0&&(subLeft<=0||subBy[a.id]>=perMax||a.reserve))continue;
       for(const u of unitsFor(a)){
+        if(u.isSub){ if(subLeft<=0||subBy[a.id]>=perMax||a.reserve)continue; }
+        else if(left[a.id]<=0)continue;
         for(const d of ctx.live){
           if(E[d.id]>=3-1e-9)continue;
           if(!cfg.allowRepeat&&assigns.some(x=>x.aId===a.id&&x.dId===d.id))continue;
@@ -571,7 +576,8 @@ function allocate(ours,opps,cfg,ctx,S){
     if(!best)break;
     assigns.push({aId:best.a.id,label:best.u.label,isSub:best.u.isSub,
       role:best.a.role,dId:best.d.id,p:best.p});
-    left[best.a.id]--;
+    if(best.u.isSub){subLeft--;subBy[best.a.id]++;}
+    else left[best.a.id]--;
     E[best.d.id]=Math.min(3,E[best.d.id]+best.p);
     drop[best.d.id]=Math.min(20,drop[best.d.id]+(1-best.p)*best.amt);
     opened[best.d.id]=true;
@@ -689,7 +695,7 @@ const st={
   oppDb:{}, oppClub:"Keystone", clubSel:"", live:{},
   warSel:0, logDir:"atk", records:[], warResults:[], scoreUs:"", scoreThem:"",
   renameFrom:"", renameTo:"", msg:"", sortMode:"power", oppAdj:false,
-  cfg:{subOvr:112, subNote:"", anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, warSeasonNow:104,
+  cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, warSeasonNow:104,
     oppGames:40, kRank:1.1, kOvr:.08, kWin:1, kGames:.5, bias:.9,
     subPenalty:.8, blindPenalty:.2, chipW:.3, captureBias:1, revealValue:.4,
     target:180, homeStadium:"대구", allowRepeat:true}
@@ -951,6 +957,9 @@ function viewOurs(){
    '<span style="font-size:13px;white-space:nowrap">선발 OVR</span>'+
    '<input type="text" id="in-subovr" inputmode="decimal" style="width:100px" value="'+esc(st.cfg.subOvr||"")+'" placeholder="112.0">'+
    '<span class="mini">0이면 오더에서 제외</span></div>'+
+   '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+
+   chip("클럽 총 "+st.cfg.subPool+"회","cyan")+chip("1인 최대 "+st.cfg.subPerPerson+"회","cyan")+
+   chip("3회 공격과 별개","violet")+'</div>'+
    '<textarea id="ta-subnote" style="min-height:64px" placeholder="덱 메모 — 주전 구성, 강점, 약점">'+esc(st.cfg.subNote||"")+'</textarea></div>'+
 
    '<div class="hr"><div class="lbl"><b>랭킹챌린지 기록</b><i>닉네임 · 순위 · 승 · 무 · 패</i></div>'+
@@ -1096,6 +1105,10 @@ function viewOrder(){
     '<div style="display:flex;justify-content:space-between;margin-top:6px" class="mini">'+
     '<span>목표 '+cfg.target+'점</span><span style="color:'+(sim.hitRate>.5?"var(--green)":"var(--dim)")+'">달성 확률 '+
     Math.round(sim.hitRate*100)+'%</span></div></div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">'+
+    chip("본덱 "+D.plan.assigns.filter(x=>!x.isSub).length+"회","dim")+
+    chip("클라 "+D.plan.assigns.filter(x=>x.isSub).length+"/"+st.cfg.subPool+"회",
+      D.plan.assigns.filter(x=>x.isSub).length>=st.cfg.subPool?"green":"amber")+'</div>'+
     '<div class="btnrow" style="margin-top:12px">'+
     btnH("btn-livereset","진행 상황 초기화","dim")+'<span class="msg"></span></div>'+
     '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">'+
@@ -1251,6 +1264,8 @@ function viewCfg(){
    slider("s-kovr","선발 OVR 비중",c.kOvr,0,.5,.01,v=>"OVR +5 → "+pct(v*5))+
    slider("s-bias","공격 측 보정",c.bias,-1.5,1.5,.05,v=>"동급끼리 "+pct(v))+
    slider("s-sub","클라 약점",c.subPenalty,0,3,.1,v=>v.toFixed(1))+
+   slider("s-subpool","클라 클럽 총 횟수",c.subPool,0,12,1,v=>v+"회")+
+   slider("s-subper","클라 1인 최대",c.subPerPerson,1,4,1,v=>v+"회")+
    slider("s-blind","미공개 상대 리스크",c.blindPenalty,0,1.5,.05,v=>v.toFixed(2))+'</div>'+
    '<div class="fld"><div class="lbl"><b>전략</b></div>'+
    slider("s-chip","OVR 깎기 중시도",c.chipW,0,2,.05,v=>v.toFixed(2))+
@@ -1486,6 +1501,8 @@ function bind(){
     ["s-kovr","kOvr",v=>"OVR +5 → "+pct(v*5)],
     ["s-bias","bias",v=>"동급끼리 "+pct(v)],
     ["s-sub","subPenalty",v=>v.toFixed(1)],
+    ["s-subpool","subPool",v=>v+"회"],
+    ["s-subper","subPerPerson",v=>v+"회"],
     ["s-blind","blindPenalty",v=>v.toFixed(2)],
     ["s-chip","chipW",v=>v.toFixed(2)],
     ["s-reveal","revealValue",v=>v.toFixed(2)],
