@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b5.9)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b6.0)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 5.9 · 2026-08-04</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.0 · 2026-08-04</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -264,10 +264,11 @@ function parseRecords(text,roster,odb,season,club,cfg,dir){
     if(win==null){bad.push(li+1);return;}
 
     const aName=c[0], dName=c[1];
+    /* 명단에 없는 이름이 와도 크래시 없이 기본값으로 처리한다 */
     const aMine=weAttack?roster.find(x=>x.name===aName):null;
     const dMine=weAttack?null:roster.find(x=>x.name===dName);
-    const aOpp=weAttack?null:(odb[aName]||{});
-    const dOpp=weAttack?(odb[dName]||{}):null;
+    const aOpp=odb[aName]||{};
+    const dOpp=odb[dName]||{};
     const og=cfg.oppGames||40;
     const aSub=tags.some(t=>/^(클라|라인업)$/.test(t));
 
@@ -693,7 +694,7 @@ const st={
   tab:0, oursText:S_OURS, oppsText:S_OPPS, logText:"",
   rcText:"", rcSeasonSel:0, rcRecords:S_RC.slice(),
   oppDb:{}, oppClub:"Keystone", clubSel:"", live:{},
-  warSel:0, logDir:"atk", records:[], warResults:[], scoreUs:"", scoreThem:"",
+  warSel:0, logAtk:"", logDef:"", records:[], warResults:[], scoreUs:"", scoreThem:"",
   renameFrom:"", renameTo:"", msg:"", sortMode:"power", oppAdj:false,
   cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, warSeasonNow:104,
     oppGames:40, kRank:1.1, kOvr:.08, kWin:1, kGames:.5, bias:.9,
@@ -712,7 +713,8 @@ function derive(){
   D.sim=simulate(D.plan,D.ours,D.opps,st.cfg);
   D.fit=fitModel(st.records,st.cfg);
   if(!st.warSel)st.warSel=st.cfg.warSeasonNow;
-  D.staged=parseRecords(st.logText,D.ours,st.oppDb,st.warSel,st.oppClub,st.cfg,st.logDir);
+  D.stAtk=parseRecords(st.logAtk,D.ours,st.oppDb,st.warSel,st.oppClub,st.cfg,"atk");
+  D.stDef=parseRecords(st.logDef,D.ours,st.oppDb,st.warSel,st.oppClub,st.cfg,"def");
   if(!st.rcText.trim()&&D.ours.length)st.rcText=rcTemplate(st.rcSeasonSel);
   D.rcStaged=parseRc(st.rcText,st.rcSeasonSel,"우리","");
   D.orphans=Object.keys(D.rc).filter(n=>!D.ours.some(a=>a.name===n));
@@ -737,8 +739,8 @@ function rcTemplate(season){
 }
 
 /* ── 닉네임 자동완성 (기록 탭) ── */
-function acPool(col){
-  const mineFirst=st.logDir!=="def";
+function acPool(col,dir){
+  const mineFirst=dir!=="def";
   if((col===0)===mineFirst)return D.ours.map(a=>a.name);
   const set={};
   Object.keys(st.oppDb).forEach(n=>set[n]=1);
@@ -755,25 +757,27 @@ function acContext(el){
   const tok=seg[seg.length-1];
   return {col:seg.length-1, token:tok, start:ls+line.length-tok.length, pos:pos};
 }
-function acUpdate(){
-  const el=document.getElementById("ta-log"), box=document.getElementById("ac");
+function acUpdate(taId){
+  taId=taId||"ta-atk";
+  const el=document.getElementById(taId), box=document.getElementById("ac-"+taId);
   if(!el||!box)return;
+  const dir=taId==="ta-def"?"def":"atk";
   const c=acContext(el), t=(c.token||"").trim();
   if(c.col>1||!t){box.innerHTML="";return;}
-  const pool=acPool(c.col);
+  const pool=acPool(c.col,dir);
   const lower=t.toLowerCase();
   let hit=pool.filter(n=>n!==t&&n.toLowerCase().indexOf(lower)===0);
   if(!hit.length)hit=pool.filter(n=>n!==t&&n.toLowerCase().indexOf(lower)>=0);
-  box.innerHTML=hit.slice(0,8).map(n=>'<button class="acb" data-n="'+esc(n)+'">'+esc(n)+'</button>').join("");
+  box.innerHTML=hit.slice(0,8).map(n=>'<button class="acb" data-n="'+esc(n)+'" data-ta="'+taId+'">'+esc(n)+'</button>').join("");
 }
-function acInsert(name){
-  const el=document.getElementById("ta-log"); if(!el)return;
+function acInsert(taId,name){
+  const el=document.getElementById(taId); if(!el)return;
   const c=acContext(el), v=el.value;
   el.value=v.slice(0,c.start)+name+"\t"+v.slice(c.pos);
   const np=c.start+name.length+1;
   el.selectionStart=el.selectionEnd=np;
-  st.logText=el.value;
-  el.focus(); acUpdate();
+  if(taId==="ta-def")st.logDef=el.value; else st.logAtk=el.value;
+  el.focus(); acUpdate(taId);
 }
 
 /* 보정값을 사람이 읽을 수 있게 */
@@ -1186,8 +1190,16 @@ function viewLog(){
     opts+='<option value="'+i+'" '+(i===st.warSel?"selected":"")+'>'+i+' 시즌'+
       (i===now?" (현재)":"")+'</option>';
 
+  const wl=st.warResults.reduce((t,r)=>{t[r.us>r.them?"w":r.us<r.them?"l":"d"]++;return t;},{w:0,l:0,d:0});
+  const nA=D.stAtk.rows.length, nD=D.stDef.rows.length;
+  const hasScore=st.scoreUs!==""&&st.scoreThem!=="";
+  const parts=[];
+  if(hasScore)parts.push("최종점수");
+  if(nA)parts.push("공격 "+nA+"건");
+  if(nD)parts.push("수비 "+nD+"건");
+
   let fitBox='<div class="card" style="padding:14px;margin:18px 0"><div class="lbl"><b>학습된 승률 모델</b></div>';
-  if(!f) fitBox+='<div class="note" style="margin:0">기록 '+st.records.length+'건. 8건부터 학습을 시작합니다. 접전이었던 판만 모아도 충분합니다.</div>';
+  if(!f) fitBox+='<div class="note" style="margin:0">기록 '+st.records.length+'건. 8건부터 학습을 시작합니다.</div>';
   else fitBox+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">'+
       chip("표본 "+f.n+"건","cyan")+chip("승률 "+Math.round(f.winRate*100)+"%","cyan")+
       chip("적중 "+Math.round(f.acc*100)+"%",f.acc>.65?"green":"amber")+
@@ -1195,7 +1207,6 @@ function viewLog(){
       '<div class="mini" style="line-height:1.9;margin-bottom:12px">'+
       '<div>랭챌 비중 '+st.cfg.kRank.toFixed(2)+' → <span style="color:var(--chalk)">'+f.kRank.toFixed(2)+'</span></div>'+
       '<div>승률 비중 '+st.cfg.kWin.toFixed(2)+' → <span style="color:var(--chalk)">'+f.kWin.toFixed(2)+'</span></div>'+
-      '<div>OVR 비중 '+st.cfg.kOvr.toFixed(3)+' → <span style="color:var(--chalk)">'+f.kOvr.toFixed(3)+'</span></div>'+
       '<div>공격 보정 '+st.cfg.bias.toFixed(2)+' → <span style="color:var(--chalk)">'+f.bias.toFixed(2)+'</span></div></div>'+
       '<div class="note" style="margin-bottom:12px">'+(f.logloss<f.baseLL
         ?"지금 모델이 단순 평균보다 잘 맞습니다. 반영해도 좋습니다."
@@ -1203,49 +1214,55 @@ function viewLog(){
       btnH("btn-fit","학습값 반영","amber");
   fitBox+='</div>';
 
-  const recent=st.records.slice(-25).reverse();
-  const mine=st.warResults.filter(r=>r.season===st.warSel);
-  const wl=st.warResults.reduce((t,r)=>{t[r.us>r.them?"w":r.us<r.them?"l":"d"]++;return t;},{w:0,l:0,d:0});
-  const dirBtn=(v,label)=>'<button class="act" id="btn-dir-'+v+'" style="flex:1;color:var(--'+
-    (st.logDir===v?"amber":"dim")+');border:1px solid var(--'+(st.logDir===v?"amber":"line")+')">'+label+'</button>';
+  const recent=st.records.map((r,i)=>({r,i})).slice(-30).reverse();
 
-  return '<div class="fld"><div class="lbl"><b>클럽대전 시즌</b><i>현재 '+st.cfg.warSeasonNow+'시즌</i></div>'+
+  return '<div class="fld"><div class="lbl"><b>클럽대전 시즌</b><i>현재 '+now+'시즌</i></div>'+
    '<select id="sel-war">'+opts+'</select></div>'+
 
    '<div class="card" style="padding:14px;margin-bottom:18px">'+
-   '<div class="lbl"><b>클럽 최종 점수</b><i>'+st.warSel+' 시즌</i></div>'+
+   '<div class="lbl"><b>상대 클럽과 최종 점수</b></div>'+
    '<input type="text" id="in-club3" value="'+esc(st.oppClub)+'" placeholder="상대 클럽명" style="margin-bottom:10px">'+
-   '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
+   '<div style="display:flex;align-items:center;gap:8px">'+
    '<span style="font-size:13px;white-space:nowrap">우리</span>'+
-   '<input type="text" id="in-su" inputmode="numeric" value="'+esc(st.scoreUs)+'" placeholder="182" style="width:80px">'+
+   '<input type="text" id="in-su" inputmode="numeric" value="'+esc(st.scoreUs)+'" placeholder="125" style="width:80px">'+
    '<span style="color:var(--dim)">:</span>'+
-   '<input type="text" id="in-st" inputmode="numeric" value="'+esc(st.scoreThem)+'" placeholder="177" style="width:80px">'+
+   '<input type="text" id="in-st" inputmode="numeric" value="'+esc(st.scoreThem)+'" placeholder="192" style="width:80px">'+
    '<span style="font-size:13px;white-space:nowrap">상대</span></div>'+
-   '<div class="btnrow">'+btnH("btn-warsave","최종 점수 저장","green")+'<span class="msg"></span></div>'+
    (st.warResults.length?'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">'+
      chip("통산 "+wl.w+"승 "+wl.l+"패"+(wl.d?" "+wl.d+"무":""),wl.w>=wl.l?"green":"red")+
-     st.warResults.slice(-6).reverse().map(r=>chip(r.season+" "+(r.club||"?")+" "+r.us+":"+r.them,
+     st.warResults.slice(-5).reverse().map(r=>chip(r.season+" "+(r.club||"?")+" "+r.us+":"+r.them,
        r.us>r.them?"green":r.us<r.them?"red":"dim")).join("")+'</div>':"")+'</div>'+
 
-   '<div class="fld"><div class="lbl"><b>누가 공격한 판인가요</b></div>'+
-   '<div style="display:flex;gap:8px">'+dirBtn("atk","우리가 공격")+dirBtn("def","상대가 공격")+'</div></div>'+
-   '<div class="fld"><div class="lbl"><b>대전 결과</b><i>'+
-   (st.logDir==="def"?"상대이름 · 우리이름 · 스코어":"우리이름 · 상대이름 · 스코어")+'</i></div>'+
-   '<textarea id="ta-log" placeholder="'+(st.logDir==="def"?"뚜뚜&#9;한방에간다&#9;2-5":"한방에간다&#9;뚜뚜&#9;5-2")+'">'+esc(st.logText)+'</textarea>'+
-   '<div id="ac" class="acbox"></div></div>'+
-   '<div class="note">닉네임을 한두 글자만 치면 아래에 후보가 뜹니다. 눌러서 넣으세요. <b>스코어만 적으면 승패는 자동으로 정해집니다</b>(앞이 공격 측 득점). 동점은 공격 실패로 봅니다. 순위·승률은 두 탭의 자료에서 자동으로 채웁니다. 클라로 쳤으면 줄에 <b>클라</b>, 상대가 클라였으면 <b>상대클라</b>를 적으세요.</div>'+
-   '<div class="btnrow">'+btnH("btn-add","기록 "+D.staged.rows.length+"건 추가","green")+
-   (D.staged.bad.length?'<span style="font-size:12px;color:var(--red)">'+D.staged.bad.length+'줄 건너뜀</span>':"")+
-   '<span class="msg"></span></div>'+
+   '<div class="fld"><div class="lbl"><b>우리가 공격</b><i>우리이름 · 상대이름 · 스코어</i></div>'+
+   '<textarea id="ta-atk" style="min-height:150px" placeholder="한방에간다&#9;뚜뚜&#9;5-2">'+esc(st.logAtk)+'</textarea>'+
+   '<div id="ac-ta-atk" class="acbox"></div></div>'+
+
+   '<div class="fld"><div class="lbl"><b>상대가 공격</b><i>상대이름 · 우리이름 · 스코어</i></div>'+
+   '<textarea id="ta-def" style="min-height:150px" placeholder="뚜뚜&#9;한방에간다&#9;2-5">'+esc(st.logDef)+'</textarea>'+
+   '<div id="ac-ta-def" class="acbox"></div></div>'+
+
+   '<div class="note">앞이 공격 측 득점입니다. <b>스코어만 적으면 승패는 자동</b>이고 동점은 공격 실패로 봅니다. 닉네임은 한두 글자만 쳐도 후보가 뜹니다. 클라로 친 판은 줄 끝에 <b>클라</b>를 적으세요.</div>'+
+   ((D.stAtk.bad.length||D.stDef.bad.length)?'<div class="note" style="color:var(--red)">읽지 못한 줄 — 공격 '+
+     D.stAtk.bad.length+'줄, 수비 '+D.stDef.bad.length+'줄</div>':"")+
+   '<div class="btnrow">'+btnH("btn-saveall",parts.length?parts.join(" + ")+" 저장":"저장할 내용 없음",
+     parts.length?"green":"dim")+'<span class="msg"></span></div>'+
+
    fitBox+
-   '<div class="hr"><div class="lbl"><b>최근 기록 '+st.records.length+'건</b></div>'+
-   (recent.length?recent.map(r=>'<div class="row"><span class="nm">'+esc(r.a)+' → '+esc(r.d)+'</span>'+
-     chip(r.dir==="def"?"수비":"공격",r.dir==="def"?"violet":"cyan")+
-     (r.club?chip(r.club,"dim"):"")+chip(r.season+"시즌","dim")+
-     (r.runsFor!=null?chip(r.runsFor+"-"+r.runsAgainst,"cyan"):"")+
-     chip(r.win?"승":"패",r.win?"green":"red")+'</div>').join("")
-     :'<div class="note" style="margin:0">아직 없습니다.</div>')+'</div>'+
-   '<div class="btnrow" style="margin-top:16px">'+btnH("btn-exp","전체 기록 복사","cyan")+'</div>'+
+
+   '<div class="hr"><div class="lbl"><b>저장된 기록 '+st.records.length+'건</b><i>×를 눌러 삭제</i></div>'+
+   (recent.length?recent.map(o=>{
+     const r=o.r;
+     return '<div class="row"><button class="mv" data-del="'+o.i+'" style="margin-right:6px;color:var(--red)">×</button>'+
+       '<span class="nm">'+esc(r.a)+' → '+esc(r.d)+'</span>'+
+       chip(r.dir==="def"?"수비":"공격",r.dir==="def"?"violet":"cyan")+
+       (r.club?chip(r.club,"dim"):"")+chip(r.season+"","dim")+
+       (r.runsFor!=null?chip(r.runsFor+"-"+r.runsAgainst,"cyan"):"")+
+       chip(r.win?"승":"패",r.win?"green":"red")+'</div>';
+   }).join(""):'<div class="note" style="margin:0">아직 없습니다.</div>')+
+   (st.records.length>30?'<div class="note">최근 30건만 보여줍니다.</div>':"")+'</div>'+
+
+   '<div class="btnrow" style="margin-top:16px">'+btnH("btn-exp","전체 기록 복사","cyan")+
+   btnH("btn-delseason",st.warSel+"시즌 "+(st.oppClub||"?")+" 기록 삭제","red")+'</div>'+
    '<textarea readonly style="margin-top:12px;min-height:100px;color:var(--dim)">'+esc(logExport())+'</textarea>';
 }
 
@@ -1312,16 +1329,22 @@ function bind(){
   on("ta-ours","blur",render);
   on("ta-opps","input",e=>{st.oppsText=e.target.value;});
   on("ta-opps","blur",render);
-  on("ta-log","input",e=>{st.logText=e.target.value;acUpdate();});
-  on("ta-log","click",acUpdate);
-  on("ta-log","keyup",acUpdate);
-  on("ta-log","blur",()=>{setTimeout(()=>{
-    const b=document.getElementById("ac"); if(b&&b.dataset.hold==="1"){b.dataset.hold="";return;}
-    render();},120);});
-  const acbox=document.getElementById("ac");
-  if(acbox)acbox.addEventListener("mousedown",e=>{
-    const b=e.target.closest(".acb"); if(!b)return;
-    e.preventDefault(); acbox.dataset.hold="1"; acInsert(b.dataset.n);
+  ["ta-atk","ta-def"].forEach(id=>{
+    on(id,"input",e=>{
+      if(id==="ta-def")st.logDef=e.target.value; else st.logAtk=e.target.value;
+      acUpdate(id);
+    });
+    on(id,"click",()=>acUpdate(id));
+    on(id,"keyup",()=>acUpdate(id));
+    on(id,"blur",()=>{setTimeout(()=>{
+      const b=document.getElementById("ac-"+id);
+      if(b&&b.dataset.hold==="1"){b.dataset.hold="";return;}
+      render();},150);});
+    const box=document.getElementById("ac-"+id);
+    if(box&&box.addEventListener)box.addEventListener("mousedown",e=>{
+      const t=e.target.closest?e.target.closest(".acb"):null; if(!t)return;
+      e.preventDefault(); box.dataset.hold="1"; acInsert(id,t.dataset.n);
+    });
   });
   on("ta-rc","input",e=>{st.rcText=e.target.value;});
   on("ta-rc","blur",render);
@@ -1430,13 +1453,6 @@ function bind(){
     st.rcText=""; await saveRc(); render();
     flash(sea+" 시즌 "+n+"명 저장 — 누적 "+st.rcRecords.length+"건");
   });
-  on("btn-add","click",async()=>{
-    if(!D.staged.rows.length){flash("추가할 기록이 없습니다");return;}
-    const n=D.staged.rows.length;
-    st.records=st.records.concat(D.staged.rows);
-    st.logText=""; await saveLog(); render();
-    flash(n+"건 추가 — 누적 "+st.records.length+"건");
-  });
   on("btn-fit","click",()=>{
     if(!D.fit)return;
     st.cfg.bias=D.fit.bias; st.cfg.kRank=D.fit.kRank;
@@ -1455,18 +1471,45 @@ function bind(){
     await saveRc(); await saveLog(); await saveOpp(); render();
     flash(n+"건을 '"+t+"'으로 옮겼습니다");
   });
-  on("btn-dir-atk","click",()=>{st.logDir="atk";render();});
-  on("btn-dir-def","click",()=>{st.logDir="def";render();});
   on("in-su","input",e=>{st.scoreUs=e.target.value;});
   on("in-st","input",e=>{st.scoreThem=e.target.value;});
-  on("btn-warsave","click",async()=>{
+  on("btn-saveall","click",async()=>{
     const u=parseInt(st.scoreUs,10), t=parseInt(st.scoreThem,10);
-    if(isNaN(u)||isNaN(t)){flash("양쪽 점수를 모두 적어주세요");return;}
-    st.warResults=st.warResults.filter(r=>!(r.season===st.warSel&&r.club===st.oppClub));
-    st.warResults.push({season:st.warSel,club:st.oppClub,us:u,them:t,ts:Date.now()});
-    st.scoreUs=""; st.scoreThem="";
-    await saveWar(); render();
-    flash(st.warSel+"시즌 "+(u>t?"승리":u<t?"패배":"무승부")+" 기록");
+    const rows=D.stAtk.rows.concat(D.stDef.rows);
+    const hasScore=!isNaN(u)&&!isNaN(t);
+    if(!hasScore&&!rows.length){flash("저장할 내용이 없습니다");return;}
+    const msg=[];
+    if(hasScore){
+      st.warResults=st.warResults.filter(r=>!(r.season===st.warSel&&r.club===st.oppClub));
+      st.warResults.push({season:st.warSel,club:st.oppClub,us:u,them:t,ts:Date.now()});
+      st.scoreUs=""; st.scoreThem="";
+      await saveWar();
+      msg.push(u>t?"승리":u<t?"패배":"무승부");
+    }
+    if(rows.length){
+      st.records=st.records.concat(rows);
+      st.logAtk=""; st.logDef="";
+      await saveLog();
+      msg.push(rows.length+"건");
+    }
+    render(); flash(st.warSel+"시즌 "+msg.join(" · ")+" 저장 — 누적 "+st.records.length+"건");
+  });
+  document.querySelectorAll("[data-del]").forEach(b=>{
+    b.addEventListener("click",async()=>{
+      const i=parseInt(b.dataset.del,10);
+      if(isNaN(i)||!st.records[i])return;
+      const r=st.records[i];
+      if(!confirm(r.a+" → "+r.d+" 기록을 지울까요?"))return;
+      st.records=st.records.filter((x,k)=>k!==i);
+      await saveLog(); render(); flash("1건 지웠습니다");
+    });
+  });
+  on("btn-delseason","click",async()=>{
+    const n=st.records.filter(r=>r.season===st.warSel&&r.club===st.oppClub).length;
+    if(!n){flash("지울 기록이 없습니다");return;}
+    if(!confirm(st.warSel+"시즌 "+st.oppClub+" 기록 "+n+"건을 지울까요?"))return;
+    st.records=st.records.filter(r=>!(r.season===st.warSel&&r.club===st.oppClub));
+    await saveLog(); render(); flash(n+"건 지웠습니다");
   });
   on("btn-dlhtml","click",downloadHtml);
   on("btn-reload","click",()=>{
