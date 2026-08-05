@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b6.5)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b6.6)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.5 · 2026-08-04</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.6 · 2026-08-04</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -695,7 +695,7 @@ const st={
   tab:0, oursText:S_OURS, oppsText:S_OPPS, logText:"",
   rcText:"", rcSeasonSel:0, rcRecords:S_RC.slice(),
   oppDb:{}, oppClub:"Keystone", clubSel:"", live:{},
-  warSel:0, editWar:null, logAtk:"", logDef:"", sel:{}, logFilter:"cur", records:[], warResults:[], scoreUs:"", scoreThem:"",
+  warSel:0, editWar:null, moveTo:0, logAtk:"", logDef:"", sel:{}, logFilter:"cur", records:[], warResults:[], scoreUs:"", scoreThem:"",
   renameFrom:"", renameTo:"", retireName:"", msg:"", sortMode:"power", oppAdj:false,
   cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, retired:[], warSeasonNow:104,
     oppGames:40, kRank:1.1, kOvr:.08, kWin:1, kGames:.5, bias:.9,
@@ -714,6 +714,7 @@ function derive(){
   D.sim=simulate(D.plan,D.ours,D.opps,st.cfg);
   D.fit=fitModel(st.records,st.cfg);
   if(!st.warSel)st.warSel=st.cfg.warSeasonNow;
+  if(!st.moveTo)st.moveTo=st.warSel;
   D.stAtk=parseRecords(st.logAtk,D.ours,st.oppDb,st.warSel,st.oppClub,st.cfg,"atk");
   D.stDef=parseRecords(st.logDef,D.ours,st.oppDb,st.warSel,st.oppClub,st.cfg,"def");
   if(!st.rcText.trim()&&D.ours.length)st.rcText=rcTemplate(st.rcSeasonSel);
@@ -1348,6 +1349,13 @@ function viewLog(){
        btnH("btn-selinv","역선택","violet")+
        btnH("btn-delsel",nSel?"선택 "+nSel+"건 삭제":"선택 없음",nSel?"red":"dim")+
        btnH("btn-exp","복사","cyan")+'<span class="msg"></span></div>'+
+       (nSel?'<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">'+
+         '<span style="font-size:13px;white-space:nowrap">선택 '+nSel+'건을</span>'+
+         '<select id="sel-moveto" style="width:120px">'+(function(){
+           let o="";
+           for(let i=WAR_MAX;i>=WAR_MIN;i--)o+='<option value="'+i+'" '+(i===st.moveTo?"selected":"")+'>'+i+' 시즌</option>';
+           return o;})()+'</select>'+
+         btnH("btn-move","시즌 옮기기","violet")+'</div>':"")+
        (shown.length?shown.map(o=>{
          const r=o.r, on=!!st.sel[r.rid];
          return '<div class="row rowsel" data-rid="'+esc(r.rid)+'" style="cursor:pointer;'+
@@ -1667,6 +1675,27 @@ function bind(){
   };
   document.querySelectorAll("[data-fil]").forEach(b=>{
     b.addEventListener("click",()=>{st.logFilter=b.dataset.fil;render();});
+  });
+  on("sel-moveto","change",e=>{st.moveTo=parseInt(e.target.value,10);});
+  on("btn-move","click",async()=>{
+    const ids=Object.keys(st.sel).filter(k=>st.sel[k]);
+    if(!ids.length){flash("선택된 기록이 없습니다");return;}
+    const picked=st.records.filter(r=>ids.indexOf(r.rid)>=0);
+    const to=st.moveTo;
+    /* 통째로 옮기는 묶음이면 최종 점수도 같이 따라간다 */
+    const groups={};
+    picked.forEach(r=>{const k=r.season+"|"+(r.club||"");groups[k]=(groups[k]||0)+1;});
+    const whole=Object.keys(groups).filter(k=>
+      st.records.filter(r=>(r.season+"|"+(r.club||""))===k).length===groups[k]);
+    const wr=st.warResults.filter(w=>whole.indexOf(w.season+"|"+(w.club||""))>=0);
+    const from=[...new Set(picked.map(r=>r.season))].join(", ");
+    if(!confirm(from+"시즌 "+picked.length+"건을 "+to+"시즌으로 옮길까요?"+
+      (wr.length?" 최종 점수 "+wr.length+"건도 함께 옮깁니다.":"")))return;
+    st.records.forEach(r=>{if(ids.indexOf(r.rid)>=0)r.season=to;});
+    wr.forEach(w=>{w.season=to;});
+    st.sel={}; st.warSel=to; st.moveTo=to;
+    await saveLog(); if(wr.length)await saveWar(); await saveAll();
+    render(); flash(picked.length+"건을 "+to+"시즌으로 옮겼습니다");
   });
   on("btn-selinv","click",()=>{
     const m={};
