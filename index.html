@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b6.3)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b6.4)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.3 · 2026-08-04</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.4 · 2026-08-04</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -695,8 +695,8 @@ const st={
   rcText:"", rcSeasonSel:0, rcRecords:S_RC.slice(),
   oppDb:{}, oppClub:"Keystone", clubSel:"", live:{},
   warSel:0, editWar:null, logAtk:"", logDef:"", sel:{}, logFilter:"cur", records:[], warResults:[], scoreUs:"", scoreThem:"",
-  renameFrom:"", renameTo:"", msg:"", sortMode:"power", oppAdj:false,
-  cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, warSeasonNow:104,
+  renameFrom:"", renameTo:"", retireName:"", msg:"", sortMode:"power", oppAdj:false,
+  cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, retired:[], warSeasonNow:104,
     oppGames:40, kRank:1.1, kOvr:.08, kWin:1, kGames:.5, bias:.9,
     subPenalty:.8, blindPenalty:.2, chipW:.3, captureBias:1, revealValue:.4,
     target:180, homeStadium:"대구", allowRepeat:true}
@@ -717,7 +717,7 @@ function derive(){
   D.stDef=parseRecords(st.logDef,D.ours,st.oppDb,st.warSel,st.oppClub,st.cfg,"def");
   if(!st.rcText.trim()&&D.ours.length)st.rcText=rcTemplate(st.rcSeasonSel);
   D.rcStaged=parseRc(st.rcText,st.rcSeasonSel,"우리","");
-  D.orphans=Object.keys(D.rc).filter(n=>!D.ours.some(a=>a.name===n));
+  D.orphans=Object.keys(D.rc).filter(n=>!D.ours.some(a=>a.name===n)&&!isRetired(n));
   D.dMap={}; D.opps.forEach(d=>D.dMap[d.id]=d);
   D.groups=[];
   st.records.forEach(r=>{
@@ -749,12 +749,12 @@ function rcTemplate(season){
 /* ── 닉네임 자동완성 (기록 탭) ── */
 function acPool(col,dir){
   const mineFirst=dir!=="def";
-  if((col===0)===mineFirst)return D.ours.map(a=>a.name);
+  if((col===0)===mineFirst)return D.ours.map(a=>a.name).filter(n=>!isRetired(n));
   const set={};
   Object.keys(st.oppDb).forEach(n=>set[n]=1);
   st.records.forEach(r=>{if(r.d)set[r.d]=1;});
   D.opps.forEach(d=>set[d.name]=1);
-  return Object.keys(set);
+  return Object.keys(set).filter(n=>!isRetired(n));
 }
 function acContext(el){
   const pos=el.selectionStart;
@@ -823,6 +823,51 @@ const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 function ensureIds(){
   let n=0;
   st.records.forEach(r=>{if(!r.rid){r.rid=uid();n++;}});
+  return n;
+}
+
+/* ── 닉네임 병합 · 클럽 탈퇴 ── */
+const isRetired=n=>(st.cfg.retired||[]).indexOf(n)>=0;
+function mergePreview(from,to){
+  const rcFrom=st.rcRecords.filter(r=>r.name===from);
+  const rcTo=st.rcRecords.filter(r=>r.name===to);
+  const dupe=rcFrom.filter(r=>rcTo.some(x=>x.season===r.season)).map(r=>r.season);
+  return {
+    rc:rcFrom.length, rcDupe:dupe,
+    logs:st.records.filter(r=>r.a===from||r.d===from).length,
+    opp:st.oppDb[from]?1:0,
+    roster:st.oursText.split(/\r?\n/).some(l=>cells(l)[0]===from)
+  };
+}
+function mergeName(from,to){
+  let n=0;
+  const toSeasons={};
+  st.rcRecords.forEach(r=>{if(r.name===to)toSeasons[r.season]=1;});
+  st.rcRecords=st.rcRecords.filter(r=>{
+    if(r.name!==from)return true;
+    n++;
+    if(toSeasons[r.season])return false;   /* 같은 시즌은 새 닉 자료를 남긴다 */
+    r.name=to; return true;
+  });
+  st.records.forEach(r=>{if(r.a===from){r.a=to;n++;} if(r.d===from){r.d=to;n++;}});
+  if(st.oppDb[from]){
+    const a=st.oppDb[from], b=st.oppDb[to];
+    const merged=b?Object.assign({},a,b,{seen:(a.seen||0)+(b.seen||0)}):Object.assign({},a);
+    merged.name=to;
+    st.oppDb=Object.assign({},st.oppDb,{[to]:merged});
+    delete st.oppDb[from]; n++;
+  }
+  const adj=Object.assign({},st.cfg.adj||{});
+  if(adj[from]!=null){ if(adj[to]==null)adj[to]=adj[from]; delete adj[from]; }
+  st.cfg.adj=adj;
+  st.cfg.order=(st.cfg.order||[]).map(x=>x===from?to:x).filter((x,i,a2)=>a2.indexOf(x)===i);
+  st.cfg.retired=(st.cfg.retired||[]).map(x=>x===from?to:x).filter((x,i,a2)=>a2.indexOf(x)===i);
+  st.oursText=st.oursText.split(/\r?\n/).map(l=>{
+    const c=cells(l);
+    if(c[0]!==from)return l;
+    n++;
+    return l.replace(from,to);
+  }).join("\n");
   return n;
 }
 
@@ -1344,13 +1389,35 @@ function viewCfg(){
    '> 한 사람이 같은 상대를 여러 번 공격 허용</label>'+
    '<div class="btnrow">'+btnH("btn-save2","설정 저장","amber")+'<span class="msg"></span></div>'+
 
-   '<div class="hr"><div class="lbl"><b>닉네임 변경</b><i>기록을 새 닉으로 옮깁니다</i></div>'+
-   '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
-   '<input type="text" id="in-rn-from" value="'+esc(st.renameFrom)+'" placeholder="이전 닉" style="flex:1;min-width:110px">'+
-   '<span style="color:var(--dim)">→</span>'+
-   '<input type="text" id="in-rn-to" value="'+esc(st.renameTo)+'" placeholder="새 닉" style="flex:1;min-width:110px">'+
-   btnH("btn-rename","옮기기","violet")+'</div>'+
-   '<div class="note" style="margin-top:10px">닉을 바꾼 상대는 이름으로 못 찾습니다. 순위와 전적이 예전 그대로면 같은 사람일 가능성이 높습니다.</div></div>'+
+   (function(){
+     const f=st.renameFrom.trim(), t=st.renameTo.trim();
+     const pv=(f&&t)?mergePreview(f,t):null;
+     const ret=st.cfg.retired||[];
+     return '<div class="hr"><div class="lbl"><b>닉네임 변경</b><i>양쪽 자료를 합칩니다</i></div>'+
+       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'+
+       '<input type="text" id="in-rn-from" value="'+esc(st.renameFrom)+'" placeholder="변경 전 닉" style="flex:1;min-width:110px">'+
+       '<span style="color:var(--dim)">→</span>'+
+       '<input type="text" id="in-rn-to" value="'+esc(st.renameTo)+'" placeholder="변경 후 닉" style="flex:1;min-width:110px">'+
+       '</div>'+
+       (pv?'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+
+         chip("랭챌 "+pv.rc+"시즌",pv.rc?"cyan":"dim")+
+         chip("대전 "+pv.logs+"건",pv.logs?"cyan":"dim")+
+         (pv.opp?chip("상대 자료","cyan"):"")+
+         (pv.roster?chip("명단 이름도 변경","green"):"")+
+         (pv.rcDupe.length?chip("겹치는 시즌 "+pv.rcDupe.join(",")+" 은 새 닉 자료 유지","amber"):"")+'</div>'+
+         (pv.rc+pv.logs+pv.opp===0?'<div class="note" style="color:var(--red)">\''+esc(f)+'\' 자료를 찾지 못했습니다.</div>':""):"")+
+       '<div class="btnrow">'+btnH("btn-rename","합치기","violet")+'<span class="msg"></span></div>'+
+       '<div class="note" style="margin-top:10px">닉을 바꾼 상대는 이름으로 못 찾습니다. 순위와 전적이 예전 그대로면 같은 사람일 가능성이 높습니다.</div></div>'+
+
+       '<div class="hr"><div class="lbl"><b>클럽 탈퇴</b><i>자료는 남기고 목록에서 숨깁니다</i></div>'+
+       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'+
+       '<input type="text" id="in-retire" value="'+esc(st.retireName||"")+'" placeholder="닉네임" style="flex:1;min-width:130px">'+
+       btnH("btn-retire","탈퇴 처리","red")+'</div>'+
+       (ret.length?'<div class="mini" style="margin-bottom:6px">탈퇴 '+ret.length+'명 — 눌러서 복귀</div>'+
+         '<div class="acbox">'+ret.map(n=>'<button class="acb" data-unret="'+esc(n)+'" style="color:var(--dim);border-color:#2C3A50">'+
+         esc(n)+' ↩</button>').join("")+'</div>':'<div class="note" style="margin:0">탈퇴 처리된 사람이 없습니다.</div>')+
+       '<div class="note" style="margin-top:10px">탈퇴해도 지난 기록은 그대로 보관됩니다. 자동완성 후보와 목록에서만 빠지고, 돌아오면 눌러서 되살릴 수 있습니다. 명단에서 이름을 빼는 것도 잊지 마세요.</div></div>';
+   })()+
 
    '<div class="hr"><div class="lbl"><b>자료 보관</b></div>'+
    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+
@@ -1513,15 +1580,33 @@ function bind(){
   });
   on("btn-rename","click",async()=>{
     const f=st.renameFrom.trim(), t=st.renameTo.trim();
-    if(!f||!t){flash("이전 닉과 새 닉을 모두 적어주세요");return;}
-    let n=0;
-    st.rcRecords.forEach(r=>{if(r.name===f){r.name=t;n++;}});
-    st.records.forEach(r=>{if(r.d===f){r.d=t;n++;} if(r.a===f){r.a=t;n++;}});
-    if(st.oppDb[f]){st.oppDb[t]=Object.assign({},st.oppDb[f],{name:t});delete st.oppDb[f];n++;}
-    if(!n){flash("'"+f+"' 자료를 찾지 못했습니다");return;}
+    if(!f||!t){flash("변경 전후 닉을 모두 적어주세요");return;}
+    if(f===t){flash("같은 닉네임입니다");return;}
+    const pv=mergePreview(f,t);
+    if(pv.rc+pv.logs+pv.opp===0&&!pv.roster){flash("'"+f+"' 자료를 찾지 못했습니다");return;}
+    if(!confirm("'"+f+"' 자료를 '"+t+"'으로 합칠까요? 되돌릴 수 없습니다."))return;
+    const n=mergeName(f,t);
     st.renameFrom=""; st.renameTo="";
-    await saveRc(); await saveLog(); await saveOpp(); render();
-    flash(n+"건을 '"+t+"'으로 옮겼습니다");
+    await saveRc(); await saveLog(); await saveOpp(); await saveAll(); render();
+    flash(n+"건을 '"+t+"'으로 합쳤습니다");
+  });
+  on("in-retire","input",e=>{st.retireName=e.target.value;});
+  on("btn-retire","click",async()=>{
+    const n=(st.retireName||"").trim();
+    if(!n){flash("닉네임을 적어주세요");return;}
+    const ret=(st.cfg.retired||[]).slice();
+    if(ret.indexOf(n)>=0){flash("이미 탈퇴 처리된 사람입니다");return;}
+    ret.push(n); st.cfg.retired=ret;
+    st.oursText=st.oursText.split(/\r?\n/).filter(l=>cells(l)[0]!==n).join("\n");
+    st.retireName="";
+    await saveAll(); render(); flash("'"+n+"' 탈퇴 처리 — 자료는 보관됩니다");
+  });
+  document.querySelectorAll("[data-unret]").forEach(b=>{
+    b.addEventListener("click",async()=>{
+      const n=b.dataset.unret;
+      st.cfg.retired=(st.cfg.retired||[]).filter(x=>x!==n);
+      await saveAll(); render(); flash("'"+n+"' 복귀 처리 — 명단에 이름을 다시 넣으세요");
+    });
   });
   document.querySelectorAll("[data-war]").forEach(b=>{
     b.addEventListener("click",()=>{
