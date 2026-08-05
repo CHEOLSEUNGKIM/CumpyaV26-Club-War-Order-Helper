@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b6.4)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b6.5)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.4 · 2026-08-04</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.5 · 2026-08-04</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -108,7 +108,8 @@ function winZ(games,wins){
   return Math.log(p/(1-p));
 }
 const seasonKey=v=>parseFloat(v)||0;
-const SEASON_MIN=200, SEASON_MAX=300;
+const SEASON_MIN=200, SEASON_MAX=300;   /* 랭킹챌린지 */
+const WAR_MIN=99, WAR_MAX=120;          /* 클럽대전 */
 const isoDay=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 /* 랭챌 한 시즌: 월 08:00 → 다음 월 00:00 */
 function rcSeason(cfg,now){
@@ -879,7 +880,7 @@ const stamp=t=>{const d=new Date(t);
 function snapshot(){
   const now=Date.now();
   return {v:5, ts:now, built:stamp(now),
-    oursText:st.oursText, cfg:st.cfg, oppClub:st.oppClub,
+    oursText:st.oursText, cfg:st.cfg, oppClub:st.oppClub, warSel:st.warSel,
     rcRecords:st.rcRecords, oppDb:st.oppDb, records:st.records, warResults:st.warResults};
 }
 function applySnapshot(o){
@@ -888,6 +889,7 @@ function applySnapshot(o){
   if(o.cfg)Object.assign(st.cfg,o.cfg);
   if(o.warSeason&&!(o.cfg&&o.cfg.warSeasonNow))st.cfg.warSeasonNow=o.warSeason;
   if(o.oppClub)st.oppClub=o.oppClub;
+  if(o.warSel)st.warSel=o.warSel;
   if(Array.isArray(o.warResults))st.warResults=o.warResults;
   if(Array.isArray(o.rcRecords))st.rcRecords=o.rcRecords;
   if(o.oppDb&&typeof o.oppDb==="object")st.oppDb=o.oppDb;
@@ -919,13 +921,13 @@ function downloadHtml(){
 async function saveAll(){
   const s=snapshot();
   const ok=await store.set("clubwar:v5",JSON.stringify({
-    v:5, ts:s.ts, oursText:s.oursText, cfg:s.cfg, oppClub:s.oppClub}));
+    v:5, ts:s.ts, oursText:s.oursText, cfg:s.cfg, oppClub:s.oppClub, warSel:s.warSel}));
   flash(ok?"저장했습니다":"이 환경에서는 저장이 안 됩니다 — 설정 탭에서 백업하세요");
 }
 async function touch(){
   const s=snapshot();
   await store.set("clubwar:v5",JSON.stringify({v:5,ts:s.ts,built:s.built,
-    oursText:s.oursText,cfg:s.cfg,oppClub:s.oppClub}));
+    oursText:s.oursText,cfg:s.cfg,oppClub:s.oppClub,warSel:s.warSel}));
 }
 const saveRc=async()=>{await store.set("clubwar:rc",JSON.stringify(st.rcRecords));await touch();};
 const saveOpp=async()=>{await store.set("clubwar:opp",JSON.stringify(st.oppDb));await touch();};
@@ -976,7 +978,7 @@ function paintNav(){
   document.getElementById("nav").innerHTML=TABS.map((t,i)=>
     '<button class="'+(st.tab===i?"on":"")+'" data-t="'+i+'">'+t+'</button>').join("");
   document.getElementById("hdinfo").textContent=
-    "클대 "+st.cfg.warSeasonNow+" · 랭챌 "+(D.rcNow?D.rcNow.num:"-");
+    "클대 "+st.warSel+" · 랭챌 "+(D.rcNow?D.rcNow.num:"-");
 }
 function render(){
   derive(); paintNav();
@@ -1248,12 +1250,11 @@ function logExport(){
 function viewLog(){
   const f=D.fit;
   let opts="";
-  const now=st.cfg.warSeasonNow;
   const cnt={};
   st.records.forEach(r=>{cnt[r.season]=(cnt[r.season]||0)+1;});
-  for(let i=now;i>now-6;i--)
+  for(let i=WAR_MAX;i>=WAR_MIN;i--)
     opts+='<option value="'+i+'" '+(i===st.warSel?"selected":"")+'>'+i+' 시즌'+
-      (i===now?" (현재)":"")+(cnt[i]?" · "+cnt[i]+"건":"")+'</option>';
+      (cnt[i]?" · "+cnt[i]+"건":"")+'</option>';
 
   const wl=st.warResults.reduce((t,r)=>{t[r.us>r.them?"w":r.us<r.them?"l":"d"]++;return t;},{w:0,l:0,d:0});
   const nA=D.stAtk.rows.length, nD=D.stDef.rows.length;
@@ -1281,7 +1282,7 @@ function viewLog(){
 
   const recent=st.records.map((r,i)=>({r,i})).slice(-30).reverse();
 
-  return '<div class="fld"><div class="lbl"><b>클럽대전 시즌</b><i>현재 '+now+'시즌</i></div>'+
+  return '<div class="fld"><div class="lbl"><b>클럽대전 시즌</b></div>'+
    '<select id="sel-war">'+opts+'</select></div>'+
 
    '<div class="card" style="padding:14px;margin-bottom:18px">'+
