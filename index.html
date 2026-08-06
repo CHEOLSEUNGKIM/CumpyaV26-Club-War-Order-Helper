@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b6.7)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b6.8)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.7 · 2026-08-04</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.8 · 2026-08-05</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -1296,7 +1296,7 @@ function viewLog(){
    '<input type="text" id="in-st" inputmode="numeric" value="'+esc(st.scoreThem)+'" placeholder="192" style="width:80px">'+
    '<span style="font-size:13px;white-space:nowrap">상대</span></div>'+
    (st.editWar!=null?'<div class="note" style="color:var(--violet);margin:10px 0 0">'+
-     '수정 중 — 위 칸을 고치고 저장하면 이 경기가 갱신됩니다.</div>'+
+     '수정 중 — 맨 위 <b>시즌</b>이나 클럽명·점수를 고치고 아래 저장 버튼을 누르면 이 경기가 그대로 옮겨집니다.</div>'+
      '<div class="btnrow" style="margin-top:10px">'+btnH("btn-warcancel","수정 취소","dim")+
      btnH("btn-wardel","이 경기 삭제","red")+'</div>':"")+
    (st.warResults.length?'<div style="margin-top:12px">'+
@@ -1339,7 +1339,7 @@ function viewLog(){
      }
      const shown=list.slice(0,80);
      const nSel=Object.keys(st.sel).filter(k=>st.sel[k]).length;
-     const allOn=shown.length>0&&shown.every(o=>st.sel[o.r.rid]);
+     const allOn=list.length>0&&list.every(o=>st.sel[o.r.rid]);
      return '<div class="lbl"><b>저장된 기록</b><i>'+list.length+'건 표시</i></div>'+
        '<div class="acbox" style="margin-bottom:10px">'+
        '<button class="acb" data-fil="all" style="color:'+(st.logFilter==="all"?"var(--amber)":"var(--dim)")+
@@ -1493,7 +1493,7 @@ function bind(){
   on("in-rn-to","input",e=>{st.renameTo=e.target.value;});
   on("sel-home","change",e=>{st.cfg.homeStadium=e.target.value;render();});
   on("sel-season","change",e=>{st.rcSeasonSel=parseInt(e.target.value,10);render();});
-  on("sel-war","change",e=>{st.warSel=parseInt(e.target.value,10);st.editWar=null;render();});
+  on("sel-war","change",e=>{st.warSel=parseInt(e.target.value,10);render();});
   on("sel-club","change",e=>{
     if(!e.target.value)return;
     st.oppClub=e.target.value;
@@ -1688,20 +1688,22 @@ function bind(){
     if(!ids.length){flash("선택된 기록이 없습니다");return;}
     const picked=st.records.filter(r=>ids.indexOf(r.rid)>=0);
     const to=st.moveTo;
-    /* 통째로 옮기는 묶음이면 최종 점수도 같이 따라간다 */
-    const groups={};
-    picked.forEach(r=>{const k=r.season+"|"+(r.club||"");groups[k]=(groups[k]||0)+1;});
-    const whole=Object.keys(groups).filter(k=>
-      st.records.filter(r=>(r.season+"|"+(r.club||""))===k).length===groups[k]);
-    const wr=st.warResults.filter(w=>whole.indexOf(w.season+"|"+(w.club||""))>=0);
+    const srcKeys=[...new Set(picked.map(r=>r.season+"|"+(r.club||"")))];
     const from=[...new Set(picked.map(r=>r.season))].join(", ");
-    if(!confirm(from+"시즌 "+picked.length+"건을 "+to+"시즌으로 옮길까요?"+
-      (wr.length?" 최종 점수 "+wr.length+"건도 함께 옮깁니다.":"")))return;
+    if(!confirm(from+"시즌 "+picked.length+"건을 "+to+"시즌으로 옮길까요?"))return;
     st.records.forEach(r=>{if(ids.indexOf(r.rid)>=0)r.season=to;});
-    wr.forEach(w=>{w.season=to;});
+    /* 옮기고 나서 텅 빈 묶음의 최종 점수는 함께 따라간다 */
+    let moved=0;
+    srcKeys.forEach(k=>{
+      if(st.records.some(r=>(r.season+"|"+(r.club||""))===k))return;
+      st.warResults.forEach(w=>{
+        if((w.season+"|"+(w.club||""))===k){w.season=to;moved++;}
+      });
+    });
+    const wr={length:moved};
     st.sel={}; st.warSel=to; st.moveTo=to;
     await saveLog(); if(wr.length)await saveWar(); await saveAll();
-    render(); flash(picked.length+"건을 "+to+"시즌으로 옮겼습니다");
+    render(); flash(picked.length+"건"+(moved?" · 최종 점수 "+moved+"건":"")+"을 "+to+"시즌으로 옮겼습니다");
   });
   on("btn-selinv","click",()=>{
     const m={};
@@ -1717,7 +1719,7 @@ function bind(){
     });
   });
   on("btn-selall","click",()=>{
-    const list=st.records.filter(filMatch).slice(-80);
+    const list=st.records.filter(filMatch);
     const allOn=list.length>0&&list.every(r=>st.sel[r.rid]);
     const m=Object.assign({},st.sel);
     list.forEach(r=>{if(allOn)delete m[r.rid]; else m[r.rid]=true;});
