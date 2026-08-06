@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b6.8)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b6.9)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.8 · 2026-08-05</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.9 · 2026-08-05</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -178,7 +178,7 @@ function parseOurs(text,rc,cfg){
     const pr=rc[c[0]];
     const rank=(pr&&pr.rank)||0, games=pr?pr.games:0, wins=pr?pr.wins:0;
     out.push({id:"A"+i,name:c[0],role,reserve,rank,games,wins,hasRc:!!pr,
-      adj:((cfg&&cfg.adj)||{})[c[0]]||0,
+      adj:((cfg&&cfg.adj)||{})[c[0]]||0, emp:empOf(c[0]),
       rz:rankZ(rank,games,cfg),wz:winZ(games,wins),
       ovr:num(c[1])!=null?num(c[1]):120,
       atk:reserve?0:((atk!=null&&atk>=0&&atk<=3)?atk:3)});
@@ -228,7 +228,7 @@ function parseOpps(text,odb,cfg,live){
     const lv=live[c[0]]||{};
     out.push({id:"D"+i,name:c[0],stadium,placed:!!stadium,
       rank,wr,games,wins,gamesKnown:gKnown,known:!!(rank||wr!=null),
-      adj:((cfg&&cfg.adj)||{})[c[0]]||0,
+      adj:((cfg&&cfg.adj)||{})[c[0]]||0, emp:empOf(c[0]),
       rz:rankZ(rank,games,cfg),wz:winZ(games,wins),
       ovr,revealed:ovr!=null,ovrFromDb:!ovrOk&&pr.ovr!=null,
       defWin:lv.def||0, taken:Math.min(3,lv.hit||0), ace, sub});
@@ -292,6 +292,43 @@ function parseRecords(text,roster,odb,season,club,cfg,dir){
   return {rows,bad};
 }
 
+/* ── 실측 보정: 그 사람과 실제로 붙어본 결과로 모델을 교정한다 ── */
+let EMP={};
+const empOf=n=>(EMP[n]&&EMP[n].adj)||0;
+
+function predictZ(r,cfg){
+  return cfg.bias+cfg.kOvr*((r.aOvr||120)-(r.dOvr||120))
+    +cfg.kRank*(rankZ(r.aRank,r.aGames||0,cfg)-rankZ(r.dRank,r.dGames||0,cfg))
+    +cfg.kWin*(winZ(r.aGames||0,r.aWins||0)-winZ(r.dGames||0,r.dWins||0))
+    +(r.aSub?-cfg.subPenalty:0)+(r.dSub?cfg.subPenalty:0);
+}
+/* 순위를 모르는 상대와의 기록은 쓰지 않는다 — 평균으로 오해하면 학습이 망가진다 */
+const usableRec=r=>!!(r.aRank&&r.dRank);
+
+function buildEmpirical(recs,cfg){
+  const acc={};
+  const add=(name,resid,v)=>{
+    const e=acc[name]||(acc[name]={r:0,v:0,n:0,name});
+    e.r+=resid; e.v+=v; e.n++;
+  };
+  recs.forEach(r=>{
+    if(!usableRec(r))return;
+    const p=1/(1+Math.exp(-predictZ(r,cfg)));
+    const v=Math.max(1e-4,p*(1-p));
+    const y=r.win?1:0;
+    add(r.a, y-p, v);      /* 공격자 관점 */
+    add(r.d, p-y, v);      /* 수비자 관점은 부호가 반대 */
+  });
+  const K=cfg.empShrink||8, cap=1.5;
+  Object.keys(acc).forEach(k=>{
+    const e=acc[k];
+    const raw=e.r/e.v;                       /* 로지스틱 오프셋 1회 보정 */
+    const shr=e.n/(e.n+K);                   /* 표본이 적으면 0쪽으로 당긴다 */
+    e.adj=Math.max(-cap,Math.min(cap,raw*shr));
+  });
+  return acc;
+}
+
 /* ── 승률 ── */
 function makeProb(cfg){
   return function(a,d){
@@ -302,6 +339,7 @@ function makeProb(cfg){
     const sk=a.isSub?.5:1;   /* 클라는 공용 덱이라 개인 랭챌 실력이 덜 반영됨 */
     z+=cfg.kRank*(sk*(a.rz||0)-(d.rz||0))+cfg.kWin*(sk*(a.wz||0)-(d.wz||0));
     z+=sk*(a.adj||0)-(d.adj||0);   /* 사람이 직접 넣은 실력 보정 */
+    z+=(cfg.empW||0)*(sk*(a.emp||0)-(d.emp||0));  /* 실제로 붙어본 결과 */
     if(a.isSub)z-=cfg.subPenalty;
     if(d.sub)z+=cfg.subPenalty;
     if(!d.revealed)z-=cfg.blindPenalty;
@@ -311,8 +349,10 @@ function makeProb(cfg){
 const chipAmt=(role,used)=>role==="KILLER"?0:(role==="OPENER"&&!used)?2:1;
 
 /* ── 학습 ── */
-function fitModel(recs,cfg){
-  const n=recs.length; if(n<8)return null;
+function fitModel(all,cfg){
+  const recs=all.filter(usableRec);
+  const n=recs.length;
+  if(n<8)return {tooFew:true,n,total:all.length,dropped:all.length-n};
   const F=recs.map(r=>({
     x1:rankZ(r.aRank,r.aGames||0,cfg)-rankZ(r.dRank,r.dGames||0,cfg),
     x2:(r.aOvr-r.dOvr)/10,
@@ -338,7 +378,8 @@ function fitModel(recs,cfg){
   }
   const wr=F.reduce((t,f)=>t+f.y,0)/n;
   const base=-(wr*Math.log(Math.max(1e-9,wr))+(1-wr)*Math.log(Math.max(1e-9,1-wr)));
-  return {n,bias:th[0],kRank:th[1],kOvr:th[2]/10,kWin:th[3],
+  return {n,total:all.length,dropped:all.length-n,
+          bias:th[0],kRank:th[1],kOvr:th[2]/10,kWin:th[3],
           acc:ok/n,logloss:ll/n,baseLL:base,winRate:wr};
 }
 
@@ -556,7 +597,7 @@ function allocate(ours,opps,cfg,ctx,S){
           if(!cfg.allowRepeat&&assigns.some(x=>x.aId===a.id&&x.dId===d.id))continue;
           const base=ctx.baseOvr(d);
           const p=prob(u,{ovrBase:base,ovrNow:base-drop[d.id],revealed:d.revealed,
-                          ace:d.ace,sub:d.sub,rz:d.rz,wz:d.wz,adj:d.adj});
+                          ace:d.ace,sub:d.sub,rz:d.rz,wz:d.wz,adj:d.adj,emp:d.emp});
           const nE=Math.min(3,E[d.id]+p);
           const dPts=cumFor(d,nE)-cumFor(d,E[d.id]);
           if(dPts<=1e-9 && !inS(d.stadium)) continue;   /* 5점만 챙길 상대는 더 안 때림 */
@@ -606,7 +647,7 @@ function buildPlan(ours,opps,cfg,db){
       for(let m=1;m<=need;m++)pts+=sched[d.taken+m-1];
       const base=ctx.baseOvr(d);
       const ps=ours.map(a=>prob(Object.assign({},a,{isSub:false}),
-        {ovrBase:base,ovrNow:base,revealed:d.revealed,ace:d.ace,sub:d.sub,rz:d.rz,wz:d.wz,adj:d.adj}))
+        {ovrBase:base,ovrNow:base,revealed:d.revealed,ace:d.ace,sub:d.sub,rz:d.rz,wz:d.wz,adj:d.adj,emp:d.emp}))
         .sort((x,y)=>y-x).slice(0,3);
       const pm=ps.length?ps.reduce((t,v)=>t+v,0)/ps.length:0.1;
       cost+=need/Math.max(0.08,pm);
@@ -656,7 +697,7 @@ function simulate(plan,ours,opps,cfg,N){
       if(!a||!d||s[d.id]>=3)continue;
       const base=plan.baseOvr(d);
       const p=prob(Object.assign({},a,{ovr:st.isSub?cfg.subOvr:a.ovr,isSub:st.isSub}),
-        {ovrBase:base,ovrNow:base-drop[d.id],revealed:d.revealed,ace:d.ace,sub:d.sub,rz:d.rz,wz:d.wz,adj:d.adj});
+        {ovrBase:base,ovrNow:base-drop[d.id],revealed:d.revealed,ace:d.ace,sub:d.sub,rz:d.rz,wz:d.wz,adj:d.adj,emp:d.emp});
       if(Math.random()<p){score+=plan.schedOf(d)[s[d.id]];s[d.id]++;}
       else drop[d.id]=Math.min(20,drop[d.id]+chipAmt(a.role,oU[d.id]));
       if(a.role==="OPENER")oU[d.id]=true;
@@ -697,7 +738,7 @@ const st={
   oppDb:{}, oppClub:"Keystone", clubSel:"", live:{},
   warSel:0, editWar:null, moveTo:0, logAtk:"", logDef:"", sel:{}, logFilter:"cur", records:[], warResults:[], scoreUs:"", scoreThem:"",
   renameFrom:"", renameTo:"", retireName:"", msg:"", sortMode:"power", oppAdj:false,
-  cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, retired:[], warSeasonNow:104,
+  cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, retired:[], empW:1, empShrink:8, warSeasonNow:104,
     oppGames:40, kRank:1.1, kOvr:.08, kWin:1, kGames:.5, bias:.9,
     subPenalty:.8, blindPenalty:.2, chipW:.3, captureBias:1, revealValue:.4,
     target:180, homeStadium:"대구", allowRepeat:true}
@@ -708,6 +749,8 @@ function derive(){
   D.rcNow=rcSeason(st.cfg);
   if(!st.rcSeasonSel)st.rcSeasonSel=D.rcNow.num-1;
   D.rc=buildRcDb(st.rcRecords);
+  EMP=buildEmpirical(st.records,st.cfg);
+  D.emp=EMP;
   D.ours=parseOurs(st.oursText,D.rc,st.cfg);
   D.opps=parseOpps(st.oppsText,st.oppDb,st.cfg,st.live);
   D.plan=buildPlan(D.ours,D.opps,st.cfg,st.oppDb);
@@ -1079,6 +1122,9 @@ function viewOurs(){
        chip(e.games+"판 "+Math.round(e.wr*100)+"%",thin?"amber":e.wr>=.6?"green":"cyan")+
        chip("실력 "+(v>=0?"+":"")+v.toFixed(2),v>.6?"green":v>-.3?"cyan":"red")+
        (adjOf(e.name)?chip("보정 "+adjLabel(adjOf(e.name)),adjOf(e.name)>0?"green":"red"):"")+
+       (D.emp[e.name]&&Math.abs(D.emp[e.name].adj)>=.05
+         ?chip("실측 "+(D.emp[e.name].adj>0?"+":"")+D.emp[e.name].adj.toFixed(2)+" ("+D.emp[e.name].n+"판)",
+           D.emp[e.name].adj>0?"green":"red"):"")+
        (thin&&!adjOf(e.name)?chip("표본 적음","amber"):"")+'</div>';
    }).join(""):'<div class="note" style="margin:0">아직 랭챌 기록이 없습니다.</div>')+
    '<div class="note" style="margin-top:10px">판수가 25판 미만이면 <b>표본 적음</b>으로 표시됩니다. 실력 지수가 낮게 나와도 실제로는 강할 수 있습니다. <b>직접 정렬</b>은 보기 순서만 바꾸고, <b>실력 보정</b>은 오더 계산까지 바꿉니다.</div></div>';
@@ -1140,6 +1186,9 @@ function oppRow(d){
     '<span class="nm">'+esc(d.name)+'</span>'+
     (d.ace?chip("에이스","violet"):"")+(d.sub?chip("클라","green"):"")+
     (adjOf(d.name)?chip("보정 "+adjLabel(adjOf(d.name)),adjOf(d.name)>0?"red":"green"):"")+
+    (D.emp[d.name]&&Math.abs(D.emp[d.name].adj)>=.05
+      ?chip("실측 "+(D.emp[d.name].adj>0?"+":"")+D.emp[d.name].adj.toFixed(2)+" ("+D.emp[d.name].n+"판)",
+        D.emp[d.name].adj>0?"red":"green"):"")+
     (d.rank?chip("#"+d.rank.toLocaleString(),"amber"):chip("순위 없음","red"))+
     (d.wr!=null?chip(d.wr.toFixed(3)+(d.gamesKnown?" ("+d.games+"판)":" (추정)"),
       d.gamesKnown?(d.wr>=.6?"green":"cyan"):"amber"):chip("승률 없음","red"))+
@@ -1266,9 +1315,13 @@ function viewLog(){
   if(nD)parts.push("수비 "+nD+"건");
 
   let fitBox='<div class="card" style="padding:14px;margin:18px 0"><div class="lbl"><b>학습된 승률 모델</b></div>';
-  if(!f) fitBox+='<div class="note" style="margin:0">기록 '+st.records.length+'건. 8건부터 학습을 시작합니다.</div>';
+  const empN=Object.keys(D.emp).filter(k=>Math.abs(D.emp[k].adj)>=.05).length;
+  if(!f||f.tooFew) fitBox+='<div class="note" style="margin:0">쓸 수 있는 기록 '+((f&&f.n)||0)+'건. 8건부터 학습을 시작합니다.'+
+    ((f&&f.dropped)?' 상대 랭챌 순위가 없는 '+f.dropped+'건은 제외했습니다.':"")+'</div>';
   else fitBox+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">'+
-      chip("표본 "+f.n+"건","cyan")+chip("승률 "+Math.round(f.winRate*100)+"%","cyan")+
+      chip("표본 "+f.n+"건","cyan")+
+      (f.dropped?chip("순위 미상 "+f.dropped+"건 제외","amber"):"")+
+      chip("승률 "+Math.round(f.winRate*100)+"%","cyan")+
       chip("적중 "+Math.round(f.acc*100)+"%",f.acc>.65?"green":"amber")+
       chip("로그손실 "+f.logloss.toFixed(3)+" / 기준 "+f.baseLL.toFixed(3),f.logloss<f.baseLL?"green":"red")+'</div>'+
       '<div class="mini" style="line-height:1.9;margin-bottom:12px">'+
@@ -1278,6 +1331,8 @@ function viewLog(){
       '<div class="note" style="margin-bottom:12px">'+(f.logloss<f.baseLL
         ?"지금 모델이 단순 평균보다 잘 맞습니다. 반영해도 좋습니다."
         :"아직 단순 평균보다 못 맞춥니다. 표본을 더 모으고 반영하세요.")+'</div>'+
+      '<div class="note" style="margin-bottom:12px">개인 실측 보정이 붙은 사람 <b>'+empN+'명</b>. '+
+      '순위·승률로 설명이 안 되는 부분을 실제 전적으로 메웁니다.</div>'+
       btnH("btn-fit","학습값 반영","amber");
   fitBox+='</div>';
 
@@ -1390,6 +1445,8 @@ function viewCfg(){
    slider("s-kwin","랭챌 승률 비중",c.kWin,0,3,.05,v=>"승률 60% vs 50% → "+pct(v*(winZ(50,30)-winZ(50,25))))+
    slider("s-kgames","판수 보정",c.kGames,0,1.5,.05,v=>v===0?"보정 없음":"20판이면 순위 "+Math.round(Math.pow(10,v*Math.log10(5)))+"배 후하게")+
    slider("s-oppgames","상대 판수 가정",c.oppGames,10,120,5,v=>v+"판으로 간주")+
+   slider("s-empw","실측 전적 반영",c.empW,0,2,.05,v=>v===0?"쓰지 않음":v.toFixed(2))+
+   slider("s-empshrink","실측 신뢰 기준",c.empShrink,2,30,1,v=>v+"판이면 절반 반영")+
    slider("s-kovr","선발 OVR 비중",c.kOvr,0,.5,.01,v=>"OVR +5 → "+pct(v*5))+
    slider("s-bias","공격 측 보정",c.bias,-1.5,1.5,.05,v=>"동급끼리 "+pct(v))+
    slider("s-sub","클라 약점",c.subPenalty,0,3,.1,v=>v.toFixed(1))+
@@ -1762,6 +1819,8 @@ function bind(){
     ["s-kwin","kWin",v=>"승률 60% vs 50% → "+pct(v*(winZ(50,30)-winZ(50,25)))],
     ["s-kgames","kGames",v=>v===0?"보정 없음":"20판이면 순위 "+Math.round(Math.pow(10,v*Math.log10(5)))+"배 후하게"],
     ["s-oppgames","oppGames",v=>v+"판으로 간주"],
+    ["s-empw","empW",v=>v===0?"쓰지 않음":v.toFixed(2)],
+    ["s-empshrink","empShrink",v=>v+"판이면 절반 반영"],
     ["s-kovr","kOvr",v=>"OVR +5 → "+pct(v*5)],
     ["s-bias","bias",v=>"동급끼리 "+pct(v)],
     ["s-sub","subPenalty",v=>v.toFixed(1)],
