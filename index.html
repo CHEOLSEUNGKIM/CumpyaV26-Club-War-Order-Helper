@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b6.6)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b6.7)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.6 · 2026-08-04</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.7 · 2026-08-04</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -1332,7 +1332,11 @@ function viewLog(){
        if(st.logFilter==="cur")return r.season===st.warSel&&(r.club||"")===st.oppClub;
        return (r.season+"|"+(r.club||""))===st.logFilter;
      };
-     const list=st.records.map((r,i)=>({r,i})).filter(o=>match(o.r)).reverse();
+     let list=st.records.map((r,i)=>({r,i})).filter(o=>match(o.r)).reverse();
+     if(!list.length&&st.records.length&&st.logFilter==="cur"){
+       st.logFilter="all";
+       list=st.records.map((r,i)=>({r,i})).reverse();
+     }
      const shown=list.slice(0,80);
      const nSel=Object.keys(st.sel).filter(k=>st.sel[k]).length;
      const allOn=shown.length>0&&shown.every(o=>st.sel[o.r.rid]);
@@ -1349,13 +1353,15 @@ function viewLog(){
        btnH("btn-selinv","역선택","violet")+
        btnH("btn-delsel",nSel?"선택 "+nSel+"건 삭제":"선택 없음",nSel?"red":"dim")+
        btnH("btn-exp","복사","cyan")+'<span class="msg"></span></div>'+
-       (nSel?'<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">'+
-         '<span style="font-size:13px;white-space:nowrap">선택 '+nSel+'건을</span>'+
+       ('<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">'+
+         '<span style="font-size:13px;white-space:nowrap">'+(nSel?"선택 "+nSel+"건을":"선택한 기록을")+'</span>'+
          '<select id="sel-moveto" style="width:120px">'+(function(){
            let o="";
            for(let i=WAR_MAX;i>=WAR_MIN;i--)o+='<option value="'+i+'" '+(i===st.moveTo?"selected":"")+'>'+i+' 시즌</option>';
            return o;})()+'</select>'+
-         btnH("btn-move","시즌 옮기기","violet")+'</div>':"")+
+         btnH("btn-move","시즌 옮기기",nSel?"violet":"dim")+'</div>')+
+       (nSel?"":'<div class="note" style="margin:0 0 10px">시즌을 잘못 넣었다면 아래 줄을 눌러 고를 수 있습니다. '+
+         '<b>보이는 것 전체 선택</b>을 누르면 지금 보이는 기록이 한꺼번에 선택됩니다.</div>')+
        (shown.length?shown.map(o=>{
          const r=o.r, on=!!st.sel[r.rid];
          return '<div class="row rowsel" data-rid="'+esc(r.rid)+'" style="cursor:pointer;'+
