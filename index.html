@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b7.1)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b7.2)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 7.1 · 2026-08-05</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 7.2 · 2026-08-05</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -1048,6 +1048,9 @@ async function bump(name,key,delta){
 }
 
 async function load(){
+  /* 토큰과 진행 상황은 다른 자료와 무관하게 항상 읽는다 */
+  try{const v=await store.get("clubwar:token"); if(v)st.token=v;}catch(e){}
+  try{const v=await store.get("clubwar:live"); if(v)st.live=JSON.parse(v);}catch(e){}
   /* 1) 브라우저에 저장된 것 */
   let stored=null;
   try{const v=await store.get("clubwar:v5"); if(v)stored=JSON.parse(v);}catch(e){}
@@ -1057,8 +1060,7 @@ async function load(){
   if(stored){
     try{const v=await store.get("clubwar:rc"); if(v)stored.rcRecords=JSON.parse(v);}catch(e){}
     try{const v=await store.get("clubwar:opp"); if(v)stored.oppDb=JSON.parse(v);}catch(e){}
-    try{const v=await store.get("clubwar:live"); if(v)st.live=JSON.parse(v);}catch(e){}
-    try{const v=await store.get("clubwar:token"); if(v)st.token=v;}catch(e){}
+
     try{const v=await store.get("clubwar:log"); if(v)stored.records=JSON.parse(v);}catch(e){}
     try{const v=await store.get("clubwar:war"); if(v)stored.warResults=JSON.parse(v);}catch(e){}
   }
@@ -1562,10 +1564,15 @@ function viewCfg(){
    (st.token?TONE.cyan:TONE.amber)+'55">'+(st.token?"토큰 저장됨":"토큰 필요")+'</span>'+
    (st.syncing?chip(st.syncing,"violet"):"")+'</div>'+
    '<input type="password" id="in-token" value="'+esc(st.token||"")+'" placeholder="깃허브 토큰 (ghp_ 또는 github_pat_)" style="margin-bottom:8px">'+
-   (st.token&&!/^(ghp_|github_pat_|gho_)/.test(st.token)
-     ?'<div class="note" style="color:var(--red);margin:0 0 8px">토큰 형식이 아닌 것 같습니다. ghp_ 또는 github_pat_ 로 시작해야 합니다.</div>':"")+
+   (st.token
+     ?'<div class="note" style="margin:0 0 8px">저장된 토큰 — <b>'+
+       esc(st.token.slice(0,7)+"…"+st.token.slice(-4))+'</b> ('+st.token.length+'자)'+
+       (!/^(ghp_|github_pat_|gho_)/.test(st.token)
+         ?' <span style="color:var(--red)">형식이 이상합니다</span>':"")+'</div>'
+     :'<div class="note" style="margin:0 0 8px">토큰을 붙여넣으면 여기에 표시됩니다.</div>')+
    '<input type="text" id="in-gist" value="'+esc(st.cfg.gistId||"")+'" placeholder="Gist ID (첫 기기는 비워두세요)" style="margin-bottom:10px">'+
    '<div class="btnrow" style="margin-bottom:10px">'+
+   btnH("btn-check","토큰 확인",st.token?"amber":"dim")+
    btnH("btn-push","이 기기 자료 올리기","green")+
    btnH("btn-pull","클라우드에서 받기",st.cfg.gistId?"cyan":"dim")+
    (st.token?btnH("btn-cleartoken","토큰 지우기","red"):"")+'<span class="msg"></span></div>'+
@@ -1890,6 +1897,15 @@ function bind(){
     if(!confirm("이 기기에서 토큰을 지울까요? 자료는 그대로입니다."))return;
     st.token=""; await store.set("clubwar:token","");
     render(); flash("토큰을 지웠습니다");
+  });
+  on("btn-check","click",async()=>{
+    if(!st.token){flash("토큰을 먼저 붙여넣어 주세요");return;}
+    st.syncing="확인 중…"; render();
+    try{
+      const u=await ghFetch("https://api.github.com/user");
+      st.syncing=""; render();
+      flash("정상입니다 — 깃허브 계정 "+(u.login||"?"));
+    }catch(e){ st.syncing=""; render(); flash(e.message); }
   });
   on("btn-push","click",syncPush);
   on("btn-pull","click",syncPull);
