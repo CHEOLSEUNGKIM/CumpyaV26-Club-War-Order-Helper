@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0C111B">
-<title>클럽대전 오더 · 컴프야 V26 (b6.9)</title>
+<title>클럽대전 오더 · 컴프야 V26 (b7.0)</title>
 <style>
 :root{
   --ink:#0C111B; --panel:#161F2E; --line:#2C3A50; --chalk:#E8EDE6;
@@ -76,7 +76,7 @@ button.mv:disabled{opacity:.3;cursor:default}
 <body>
 <header>
   <div class="title"><b>클럽대전 오더</b><span id="hdinfo"></span></div>
-  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 6.9 · 2026-08-05</div>
+  <div id="build" style="font-family:var(--mono);font-size:10px;color:#5A6A80;margin-top:4px;letter-spacing:.06em">BUILD 7.0 · 2026-08-05</div>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -737,8 +737,8 @@ const st={
   rcText:"", rcSeasonSel:0, rcRecords:S_RC.slice(),
   oppDb:{}, oppClub:"Keystone", clubSel:"", live:{},
   warSel:0, editWar:null, moveTo:0, logAtk:"", logDef:"", sel:{}, logFilter:"cur", records:[], warResults:[], scoreUs:"", scoreThem:"",
-  renameFrom:"", renameTo:"", retireName:"", msg:"", sortMode:"power", oppAdj:false,
-  cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, retired:[], empW:1, empShrink:8, warSeasonNow:104,
+  renameFrom:"", renameTo:"", retireName:"", token:"", syncing:"", msg:"", sortMode:"power", oppAdj:false,
+  cfg:{subOvr:112, subNote:"", subPool:6, subPerPerson:2, anchorSeason:227, anchorDate:"2026-08-03", order:[], adj:{}, retired:[], empW:1, empShrink:8, gistId:"", syncedAt:"", warSeasonNow:104,
     oppGames:40, kRank:1.1, kOvr:.08, kWin:1, kGames:.5, bias:.9,
     subPenalty:.8, blindPenalty:.2, chipW:.3, captureBias:1, revealValue:.4,
     target:180, homeStadium:"대구", allowRepeat:true}
@@ -871,6 +871,65 @@ function ensureIds(){
   return n;
 }
 
+/* ── 기기 간 동기화: 비밀 Gist 를 창고로 쓴다 ── */
+const GIST_FILE="clubwar.json";
+async function ghFetch(url,opt){
+  const h={"Accept":"application/vnd.github+json"};
+  if(st.token)h["Authorization"]="Bearer "+st.token;
+  if(opt&&opt.body)h["Content-Type"]="application/json";
+  let r;
+  try{ r=await fetch(url,Object.assign({headers:h},opt||{})); }
+  catch(e){ throw new Error("인터넷 연결을 확인해 주세요"); }
+  if(!r.ok){
+    const msg=r.status===401?"토큰이 잘못되었습니다"
+      :r.status===403?"토큰 권한이 부족합니다 (Gists 쓰기 권한 필요)"
+      :r.status===404?"Gist를 찾지 못했습니다 — ID를 확인해 주세요"
+      :"오류 "+r.status;
+    throw new Error(msg);
+  }
+  return r.json();
+}
+async function syncPush(){
+  if(!st.token){flash("토큰을 먼저 입력해 주세요");return;}
+  st.syncing="올리는 중…"; render();
+  try{
+    const files={}; files[GIST_FILE]={content:JSON.stringify(snapshot())};
+    let res;
+    if(st.cfg.gistId)
+      res=await ghFetch("https://api.github.com/gists/"+st.cfg.gistId,
+        {method:"PATCH",body:JSON.stringify({files})});
+    else{
+      res=await ghFetch("https://api.github.com/gists",
+        {method:"POST",body:JSON.stringify({public:false,description:"클럽대전 오더 자료",files})});
+      st.cfg.gistId=res.id;
+    }
+    st.cfg.syncedAt=stamp(Date.now());
+    st.syncing=""; await saveAll(); render();
+    flash("올렸습니다 — 다른 기기에서 받기를 누르세요");
+  }catch(e){ st.syncing=""; render(); flash(e.message); }
+}
+async function syncPull(){
+  if(!st.cfg.gistId){flash("Gist ID를 먼저 입력해 주세요");return;}
+  if(!confirm("클라우드 자료로 이 기기를 덮어씁니다. 계속할까요?"))return;
+  st.syncing="받는 중…"; render();
+  try{
+    const res=await ghFetch("https://api.github.com/gists/"+st.cfg.gistId);
+    const f=res.files&&res.files[GIST_FILE];
+    if(!f)throw new Error("이 Gist에 자료 파일이 없습니다");
+    let content=f.content;
+    if(f.truncated){ const r2=await fetch(f.raw_url); content=await r2.text(); }
+    const o=JSON.parse(content);
+    const keepId=st.cfg.gistId;
+    if(!applySnapshot(o))throw new Error("자료를 읽지 못했습니다");
+    st.cfg.gistId=keepId;
+    st.cfg.syncedAt=stamp(Date.now());
+    st.syncing="";
+    ensureIds();
+    await saveRc(); await saveOpp(); await saveLog(); await saveWar(); await saveAll();
+    render(); flash("받았습니다 — 기록 "+st.records.length+"건");
+  }catch(e){ st.syncing=""; render(); flash(e.message); }
+}
+
 /* ── 닉네임 병합 · 클럽 탈퇴 ── */
 const isRetired=n=>(st.cfg.retired||[]).indexOf(n)>=0;
 function mergePreview(from,to){
@@ -949,7 +1008,9 @@ function downloadHtml(){
     Array.prototype.slice.call(doc.querySelectorAll("script#seed")).forEach(n=>n.parentNode.removeChild(n));
     const seed=document.createElement("script");
     seed.id="seed";
-    seed.textContent="window.__SEED__="+JSON.stringify(snapshot()).replace(/</g,"\\u003c")+";";
+    const pub=snapshot();
+    pub.cfg=Object.assign({},pub.cfg); delete pub.cfg.gistId;   /* 공개 파일에 창고 주소를 싣지 않는다 */
+    seed.textContent="window.__SEED__="+JSON.stringify(pub).replace(/</g,"\\u003c")+";";
     doc.querySelector("head").appendChild(seed);
     const blob=new Blob(["<!DOCTYPE html>\n"+doc.outerHTML],{type:"text/html;charset=utf-8"});
     const url=URL.createObjectURL(blob);
@@ -997,6 +1058,7 @@ async function load(){
     try{const v=await store.get("clubwar:rc"); if(v)stored.rcRecords=JSON.parse(v);}catch(e){}
     try{const v=await store.get("clubwar:opp"); if(v)stored.oppDb=JSON.parse(v);}catch(e){}
     try{const v=await store.get("clubwar:live"); if(v)st.live=JSON.parse(v);}catch(e){}
+    try{const v=await store.get("clubwar:token"); if(v)st.token=v;}catch(e){}
     try{const v=await store.get("clubwar:log"); if(v)stored.records=JSON.parse(v);}catch(e){}
     try{const v=await store.get("clubwar:war"); if(v)stored.warResults=JSON.parse(v);}catch(e){}
   }
@@ -1491,6 +1553,22 @@ function viewCfg(){
        '<div class="note" style="margin-top:10px">탈퇴해도 지난 기록은 그대로 보관됩니다. 자동완성 후보와 목록에서만 빠지고, 돌아오면 눌러서 되살릴 수 있습니다. 명단에서 이름을 빼는 것도 잊지 마세요.</div></div>';
    })()+
 
+   '<div class="hr"><div class="lbl"><b>기기 간 동기화</b><i>컴퓨터와 휴대폰을 같은 자료로</i></div>'+
+   '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+
+   chip(st.cfg.gistId?"창고 연결됨":"창고 없음",st.cfg.gistId?"green":"dim")+
+   (st.cfg.syncedAt?chip("마지막 동기화 "+st.cfg.syncedAt,"dim"):"")+
+   (st.token?chip("토큰 저장됨","cyan"):chip("토큰 필요","amber"))+
+   (st.syncing?chip(st.syncing,"violet"):"")+'</div>'+
+   '<input type="password" id="in-token" value="'+esc(st.token||"")+'" placeholder="깃허브 토큰 (ghp_ 또는 github_pat_)" style="margin-bottom:8px">'+
+   '<input type="text" id="in-gist" value="'+esc(st.cfg.gistId||"")+'" placeholder="Gist ID (첫 기기는 비워두세요)" style="margin-bottom:10px">'+
+   '<div class="btnrow" style="margin-bottom:10px">'+
+   btnH("btn-push","이 기기 자료 올리기","green")+
+   btnH("btn-pull","클라우드에서 받기",st.cfg.gistId?"cyan":"dim")+'<span class="msg"></span></div>'+
+   '<div class="note" style="margin:0">깃허브 <b>비밀 Gist</b>에 자료를 보관합니다. 토큰은 이 기기에만 저장되고 백업 글이나 내려받은 HTML에는 들어가지 않습니다. '+
+   '먼저 컴퓨터에서 <b>올리기</b>를 누른 뒤 표시되는 Gist ID를 휴대폰에 입력하고 <b>받기</b>를 누르세요.</div>'+
+   (st.cfg.gistId?'<div class="note">Gist ID — <b>'+esc(st.cfg.gistId)+'</b></div>'+
+     '<div class="btnrow">'+btnH("btn-copygist","Gist ID 복사","cyan")+'</div>':"")+'</div>'+
+
    '<div class="hr"><div class="lbl"><b>자료 보관</b></div>'+
    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+
    chip("BUILD "+(document.getElementById("build")?document.getElementById("build").textContent.replace("BUILD ",""):"?"),"violet")+
@@ -1789,6 +1867,15 @@ function bind(){
     st.records=st.records.filter(r=>ids.indexOf(r.rid)<0);
     st.sel={}; await saveLog(); render(); flash(ids.length+"건 지웠습니다");
   });
+  on("in-token","input",async e=>{
+    st.token=e.target.value.trim();
+    await store.set("clubwar:token",st.token);
+  });
+  on("in-gist","input",e=>{st.cfg.gistId=e.target.value.trim();});
+  on("in-gist","blur",async()=>{await saveAll();render();});
+  on("btn-push","click",syncPush);
+  on("btn-pull","click",syncPull);
+  on("btn-copygist","click",()=>copy(st.cfg.gistId,"Gist ID를 복사했습니다"));
   on("btn-dlhtml","click",downloadHtml);
   on("btn-reload","click",()=>{
     try{ location.replace(location.pathname+"?v="+Date.now()); }
